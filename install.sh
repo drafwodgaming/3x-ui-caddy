@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.1
+#UPDATE 2.17
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -248,11 +248,7 @@ show_summary() {
     ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+' | tr -d '[:space:]')
     ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+' | tr -d '[:space:]')
     # Ensure webBasePath starts with / if it's not empty
-    if [[ -n "$ACTUAL_WEBBASE" && ! "$ACTUAL_WEBBASE" =~ ^/ ]]; then
-        ACTUAL_WEBBASE="/$ACTUAL_WEBBASE"
-    fi
     # Remove trailing slash from webBasePath to avoid double slashes
-    ACTUAL_WEBBASE=$(echo "$ACTUAL_WEBBASE" | sed 's:/*$::')
     SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org | tr -d '[:space:]')
     
     clear
