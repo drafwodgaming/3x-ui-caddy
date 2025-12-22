@@ -429,7 +429,7 @@ create_vless_reality_inbound() {
                         shortIds: [$shortid]
                     },
                     tcpSettings: { acceptProxyProtocol: false, header: { type: "none" } }
-                } | @json
+                }
             ),
             sniffing: (
                 {
