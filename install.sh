@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-
+#UPDATE 1.10
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -305,7 +305,7 @@ api_login() {
 
 generate_uuid() {
     local response=$(curl -s -b /tmp/xui_cookies.txt \
-        "http://127.0.0.1:${ACTUAL_PORT}${ACTUAL_WEBBASE}/panel/api/server/getNewUUID" 2>/dev/null)
+        "http://127.0.0.1:${ACTUAL_PORT}/panel/api/server/getNewUUID" 2>/dev/null)
     
     local uuid=$(echo "$response" | jq -r '.obj // empty' 2>/dev/null)
     
@@ -318,7 +318,7 @@ generate_uuid() {
 
 generate_reality_keys() {
     local response=$(curl -s -b /tmp/xui_cookies.txt \
-        "http://127.0.0.1:${ACTUAL_PORT}${ACTUAL_WEBBASE}/panel/api/server/getNewX25519Cert" 2>/dev/null)
+        "http://127.0.0.1:${ACTUAL_PORT}/panel/api/server/getNewX25519Cert" 2>/dev/null)
     
     REALITY_PRIVATE_KEY=$(echo "$response" | jq -r '.obj.privateKey // empty' 2>/dev/null)
     REALITY_PUBLIC_KEY=$(echo "$response" | jq -r '.obj.publicKey // empty' 2>/dev/null)
@@ -372,7 +372,7 @@ EOF
     
     # Send API request
     local response=$(curl -s -b /tmp/xui_cookies.txt -X POST \
-        "http://127.0.0.1:${ACTUAL_PORT}${ACTUAL_WEBBASE}/panel/api/inbounds/add" \
+        "http://127.0.0.1:${ACTUAL_PORT}/panel/api/inbounds/add" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
         -d "$inbound_json" 2>/dev/null)
