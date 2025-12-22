@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 1.10
+#UPDATE 1.11
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
