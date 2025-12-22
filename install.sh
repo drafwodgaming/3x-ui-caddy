@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.11
+#UPDATE 2.1
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -249,7 +249,7 @@ show_summary() {
     ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+' | tr -d '[:space:]')
     # Ensure webBasePath starts with / if it's not empty
     # Remove trailing slash from webBasePath to avoid double slashes
-ACTUAL_WEBBASE=$(echo "$ACTUAL_WEBBASE" | sed 's:^/*::; s:/*$::')
+    ACTUAL_WEBBASE=$(echo "$ACTUAL_WEBBASE" | sed 's:/*$::')
     SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org | tr -d '[:space:]')
     
     clear
@@ -272,7 +272,7 @@ ACTUAL_WEBBASE=$(echo "$ACTUAL_WEBBASE" | sed 's:^/*::; s:/*$::')
     echo -e "${cyan}│${plain}"
     
     if [[ "$USE_CADDY" == "true" ]]; then
-        PANEL_URL="https://${PANEL_DOMAIN}:8443/${ACTUAL_WEBBASE}"
+        PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
         SUB_URL="https://${SUB_DOMAIN}:8443/"
         echo -e "${cyan}│${plain}  Panel (HTTPS)    ${blue}${PANEL_URL}${plain}"
         echo -e "${cyan}│${plain}  Subscription     ${blue}${SUB_URL}${plain}"
@@ -298,7 +298,7 @@ api_login() {
         PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
     else
         SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
-        PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}/${ACTUAL_WEBBASE}"
+        PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
     fi
     
     local response=$(curl -k -s -c /tmp/xui_cookies.txt -X POST \
@@ -320,10 +320,10 @@ api_login() {
 generate_uuid() {
     # Determine the panel URL based on whether Caddy is used
     if [[ "$USE_CADDY" == "true" ]]; then
-        PANEL_URL="https://${PANEL_DOMAIN}:8443/${ACTUAL_WEBBASE}"
+        PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
     else
         SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
-        PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}/${ACTUAL_WEBBASE}"
+        PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
     fi
     
     local response=$(curl -k -s -b /tmp/xui_cookies.txt \
@@ -342,10 +342,10 @@ generate_uuid() {
 generate_reality_keys() {
     # Determine the panel URL based on whether Caddy is used
     if [[ "$USE_CADDY" == "true" ]]; then
-        PANEL_URL="https://${PANEL_DOMAIN}:8443/${ACTUAL_WEBBASE}"
+        PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
     else
         SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
-        PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}/${ACTUAL_WEBBASE}"
+        PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
     fi
     
     local response=$(curl -k -s -b /tmp/xui_cookies.txt \
@@ -477,10 +477,10 @@ create_vless_reality_inbound() {
     
     # Определение URL панели
     if [[ "$USE_CADDY" == "true" ]]; then
-        PANEL_URL="https://${PANEL_DOMAIN}:8443/${ACTUAL_WEBBASE}"
+        PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
     else
         SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
-        PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}/${ACTUAL_WEBBASE}"
+        PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
     fi
     
     local response=$(curl -k -s -b /tmp/xui_cookies.txt -X POST \
