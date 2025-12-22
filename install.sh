@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 1.11
+#UPDATE 1.10
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -169,10 +169,6 @@ install_3xui() {
     systemctl enable x-ui >/dev/null 2>&1
     systemctl start x-ui
     
-    # ИЗМЕНЕНО: Добавлена задержка для гарантированного запуска службы
-    echo -e "${yellow}→${plain} Waiting for 3X-UI service to start..."
-    sleep 5
-    
     /usr/local/x-ui/x-ui migrate >/dev/null 2>&1
     
     echo -e "${green}✓${plain} 3x-ui ${tag_version} installed"
@@ -212,11 +208,6 @@ configure_caddy() {
 EOF
     
     systemctl restart caddy
-    
-    # ИЗМЕНЕНО: Добавлена задержка для гарантированного запуска службы
-    echo -e "${yellow}→${plain} Waiting for Caddy service to start..."
-    sleep 5
-    
     echo -e "${green}✓${plain} Caddy configured"
 }
 
@@ -261,32 +252,41 @@ show_summary() {
 api_login() {
     echo -e "${yellow}→${plain} Authenticating..."
     
-    # ИЗМЕНЕНО: Используем printf для безопасного создания JSON с паролем, содержащим спецсимволы
-    local json_payload
-    json_payload=$(printf '{"username":"%s","password":"%s"}' "${XUI_USERNAME}" "${XUI_PASSWORD}")
-    
     local login_url="https://${PANEL_DOMAIN}:8443/${ACTUAL_WEBBASE}/login"
-    
+    echo -e "${cyan}│${plain} URL: $login_url"
+    echo -e "${cyan}│${plain} Username: $XUI_USERNAME"
+    echo -e "${cyan}│${plain} Password: $XUI_PASSWORD"
+
     local response=$(curl -k -s -c /tmp/xui_cookies.txt -X POST \
-        "${login_url}" \
+        "$login_url" \
         -H "Content-Type: application/json" \
-        -d "$json_payload" 2>/dev/null)
+        -H "Accept: application/json" \
+        -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" \
+        -w "\nHTTP_CODE:%{http_code}\nTOTAL_TIME:%{time_total}" 2>/tmp/xui_curl_err.log)
     
-    # Проверяем, является ли ответ валидным JSON и содержит ли он success: true
+    echo -e "${cyan}│${plain} Response:\n$response"
+    echo -e "${cyan}│${plain} Curl stderr logged to /tmp/xui_curl_err.log"
+
+    http_code=$(echo "$response" | grep "HTTP_CODE" | cut -d: -f2)
+    if [[ "$http_code" != "200" ]]; then
+        echo -e "${red}✗${plain} HTTP code: $http_code"
+        echo -e "${red}✗${plain} Authentication failed (HTTP error)"
+        return 1
+    fi
+
     if echo "$response" | jq -e '.success == true' >/dev/null 2>&1; then
         echo -e "${green}✓${plain} Authentication successful"
         return 0
     else
-        echo -e "${red}✗${plain} Authentication failed"
-        echo "URL: ${login_url}"
-        echo "Payload: ${json_payload}"
-        echo "Response was: ${response}" # Выводим ответ для отладки
+        echo -e "${red}✗${plain} Authentication failed (API response)"
+        echo "Full response: $response"
         return 1
     fi
 }
 
+
 generate_uuid() {
-    # ИЗМЕНЕНО: Используем порт 8443
+    # ИЗМЕНЕНО: Заменен ${ACTUAL_PORT} на 8443 для подключения через Caddy
     local response=$(curl -k -s -b /tmp/xui_cookies.txt \
         "https://${PANEL_DOMAIN}:8443/${ACTUAL_WEBBASE}/panel/api/server/getNewUUID" 2>/dev/null)
     
@@ -300,7 +300,7 @@ generate_uuid() {
 }
 
 generate_reality_keys() {
-    # ИЗМЕНЕНО: Используем порт 8443
+    # ИЗМЕНЕНО: Заменен ${ACTUAL_PORT} на 8443 для подключения через Caddy
     local response=$(curl -k -s -b /tmp/xui_cookies.txt \
         "https://${PANEL_DOMAIN}:8443/${ACTUAL_WEBBASE}/panel/api/server/getNewX25519Cert" 2>/dev/null)
     
@@ -319,6 +319,7 @@ generate_reality_keys() {
 create_vless_reality_inbound() {
     echo -e "${yellow}→${plain} Creating VLESS Reality inbound..."
     
+    # Generate client UUID
     CLIENT_UUID=$(generate_uuid)
     if [[ -z "$CLIENT_UUID" ]]; then
         echo -e "${red}✗${plain} Failed to generate UUID"
@@ -326,6 +327,7 @@ create_vless_reality_inbound() {
     fi
     echo -e "${cyan}│${plain} UUID generated"
     
+    # Generate Reality keys
     generate_reality_keys
     if [[ -z "$REALITY_PRIVATE_KEY" || -z "$REALITY_PUBLIC_KEY" ]]; then
         echo -e "${red}✗${plain} Failed to generate Reality keys"
@@ -333,8 +335,10 @@ create_vless_reality_inbound() {
     fi
     echo -e "${cyan}│${plain} Reality keys generated"
     
+    # Generate short ID
     SHORT_ID=$(openssl rand -hex 8)
     
+    # Create inbound JSON
     local inbound_json=$(cat <<EOF
 {
   "enable": true,
@@ -351,7 +355,7 @@ EOF
 )
     
     # Send API request
-    # ИЗМЕНЕНО: Используем порт 8443
+    # ИЗМЕНЕНО: Заменен ${ACTUAL_PORT} на 8443 для подключения через Caddy
     local response=$(curl -k -s -b /tmp/xui_cookies.txt -X POST \
         "https://${PANEL_DOMAIN}:8443/${ACTUAL_WEBBASE}/panel/api/inbounds/add" \
         -H "Content-Type: application/json" \
