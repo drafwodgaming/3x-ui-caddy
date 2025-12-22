@@ -2,7 +2,7 @@
 set -e
 
 # =========================================
-#   3X-UI + Caddy Installer (Modified v2)
+#   3X-UI + Caddy Installer
 # =========================================
 
 red='\033[0;31m'
@@ -13,15 +13,15 @@ cyan='\033[0;36m'
 magenta='\033[0;35m'
 plain='\033[0m'
 
-# Check root
+# Проверка root
 [[ $EUID -ne 0 ]] && echo -e "${red}✗ Error:${plain} Root privileges required" && exit 1
 
-# Check OS
+# Определяем OS
 if [[ -f /etc/os-release ]]; then
     source /etc/os-release
     release=$ID
 elif [[ -f /usr/lib/os-release ]]; then
-    source /etc/lib/os-release
+    source /usr/lib/os-release
     release=$ID
 else
     echo -e "${red}✗ Failed to detect OS${plain}"
@@ -47,20 +47,31 @@ print_banner() {
     echo "  ╭─────────────────────────────────────────╮"
     echo "  │                                         │"
     echo "  │       3X-UI + CADDY INSTALLER          │"
-    echo "  │          (Modified Version)             │"
+    echo "  │                                         │"
     echo "  ╰─────────────────────────────────────────╯"
     echo -e "${plain}"
 }
 
-read_parameters() {
-    echo -e "${blue}┌─ Panel Credentials${plain}"
-    echo -e "${blue}│${plain}"
-    read -rp "$(echo -e ${blue}│${plain}) Enter panel username (leave blank to generate): " PANEL_USERNAME_INPUT
-    read -rp "$(echo -e ${blue}│${plain}) Enter panel password (leave blank to generate): " PANEL_PASSWORD_INPUT
-    echo -e "${blue}└${plain}"
-    echo ""
+# --- Ввод логина и пароля панели ---
+read_credentials() {
+    echo -e "${blue}┌ Panel Credentials${plain}"
+    read -rp "$(echo -e ${blue}│${plain}) Username (leave empty to generate): " XUI_USERNAME
+    read -rp "$(echo -e ${blue}│${plain}) Password (leave empty to generate): " XUI_PASSWORD
 
-    echo -e "${blue}┌─ Configuration${plain}"
+    if [[ -z "$XUI_USERNAME" ]]; then
+        XUI_USERNAME=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 10 | head -n 1)
+    fi
+    if [[ -z "$XUI_PASSWORD" ]]; then
+        length=$((20 + RANDOM % 11)) # 20-30 символов
+        XUI_PASSWORD=$(LC_ALL=C tr -dc 'a-zA-Z0-9!@#$%^&*()_+-=' </dev/urandom | fold -w $length | head -n 1)
+    fi
+    echo -e "${cyan}│ Username:${green} $XUI_USERNAME ${cyan}Password:${green} $XUI_PASSWORD${plain}"
+    echo -e "${blue}└${plain}"
+}
+
+# --- Ввод портов и доменов ---
+read_parameters() {
+    echo -e "${blue}┌ Configuration${plain}"
     echo -e "${blue}│${plain}"
     read -rp "$(echo -e ${blue}│${plain}) Panel port [8080]: " PANEL_PORT
     PANEL_PORT=${PANEL_PORT:-8080}
@@ -73,6 +84,7 @@ read_parameters() {
     echo -e "${blue}└${plain}"
 }
 
+# --- Установка базовых зависимостей ---
 install_base() {
     echo -e "\n${yellow}→${plain} Installing dependencies..."
     case "${release}" in
@@ -96,39 +108,33 @@ install_base() {
     echo -e "${green}✓${plain} Dependencies installed"
 }
 
+# --- Установка 3X-UI ---
 install_3xui() {
     echo -e "${yellow}→${plain} Installing 3x-ui..."
     
     cd /usr/local/
     
-    # Get latest version
-    tag_version=$(curl -Ls "https://api.github.com/repos/drafwodgaming/3x-ui-caddy/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-    if [[ ! -n "$tag_version" ]]; then
-        tag_version=$(curl -4 -Ls "https://api.github.com/repos/drafwodgaming/3x-ui-caddy/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-        [[ ! -n "$tag_version" ]] && echo -e "${red}✗ Failed to fetch version${plain}" && exit 1
-    fi
+    tag_version=$(curl -Ls "https://api.github.com/repos/drafwodgaming/3x-ui-caddy/releases/latest" \
+        | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    [[ ! -n "$tag_version" ]] && echo -e "${red}✗ Failed to fetch version${plain}" && exit 1
     
     wget --inet4-only -q -O /usr/local/x-ui-linux-$(arch).tar.gz \
         https://github.com/drafwodgaming/3x-ui-caddy/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz
-    
     [[ $? -ne 0 ]] && echo -e "${red}✗ Download failed${plain}" && exit 1
     
     wget --inet4-only -q -O /usr/bin/x-ui-temp \
         https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/main/x-ui.sh
     
-    # Stop old service
     if [[ -e /usr/local/x-ui/ ]]; then
         systemctl stop x-ui 2>/dev/null || true
         rm /usr/local/x-ui/ -rf
     fi
     
-    # Extract
     tar zxf x-ui-linux-$(arch).tar.gz >/dev/null 2>&1
     rm x-ui-linux-$(arch).tar.gz -f
     
     cd x-ui
     chmod +x x-ui x-ui.sh
-    
     if [[ $(arch) == "armv5" || $(arch) == "armv6" || $(arch) == "armv7" ]]; then
         mv bin/xray-linux-$(arch) bin/xray-linux-arm
         chmod +x bin/xray-linux-arm
@@ -138,203 +144,93 @@ install_3xui() {
     mv -f /usr/bin/x-ui-temp /usr/bin/x-ui
     chmod +x /usr/bin/x-ui
     
-    # Configure
     config_webBasePath=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 18 | head -n 1)
-
-    # Use provided credentials or generate new ones
-    if [[ -n "$PANEL_USERNAME_INPUT" ]]; then
-        config_username=$PANEL_USERNAME_INPUT
-    else
-        config_username=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 10 | head -n 1)
-    fi
-
-    if [[ -n "$PANEL_PASSWORD_INPUT" ]]; then
-        config_password=$PANEL_PASSWORD_INPUT
-    else
-        # Generate password with length between 20 and 30
-        PASS_LEN=$((20 + RANDOM % 11))
-        config_password=$(LC_ALL=C tr -dc 'a-zA-Z0-9!@#$%^&*()_+' </dev/urandom | fold -w $PASS_LEN | head -n 1)
-    fi
     
-    /usr/local/x-ui/x-ui setting -username "${config_username}" -password "${config_password}" \
+    /usr/local/x-ui/x-ui setting -username "${XUI_USERNAME}" -password "${XUI_PASSWORD}" \
         -port "${PANEL_PORT}" -webBasePath "${config_webBasePath}" >/dev/null 2>&1
-    
-    XUI_USERNAME="${config_username}"
-    XUI_PASSWORD="${config_password}"
-    XUI_WEBBASE="${config_webBasePath}"
     
     cp -f x-ui.service /etc/systemd/system/
     systemctl daemon-reload
     systemctl enable x-ui >/dev/null 2>&1
     systemctl start x-ui
-    
-    # Wait a moment for the service to be fully up
-    sleep 3
-    
     /usr/local/x-ui/x-ui migrate >/dev/null 2>&1
     
     echo -e "${green}✓${plain} 3x-ui ${tag_version} installed"
 }
 
+# --- Установка Caddy ---
 install_caddy() {
     echo -e "${yellow}→${plain} Installing Caddy..."
-    
-    # Use a generic installation method that works for most Debian/Ubuntu-based systems
-    # For other systems, this might need adjustment, but the original script was also Debian-centric
-    if ! command -v caddy &> /dev/null; then
-        apt update >/dev/null 2>&1 && apt install -y debian-keyring debian-archive-keyring apt-transport-https >/dev/null 2>&1
-        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg >/dev/null 2>&1
-        echo "deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main" | tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
-        apt update >/dev/null 2>&1
-        apt install -y caddy >/dev/null 2>&1
-    fi
-    
+    apt update >/dev/null 2>&1 && apt install -y ca-certificates curl gnupg >/dev/null 2>&1
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key 2>/dev/null \
+        | gpg --dearmor -o /etc/apt/keyrings/caddy.gpg 2>/dev/null
+    echo "deb [signed-by=/etc/apt/keyrings/caddy.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main" \
+        | tee /etc/apt/sources.list.d/caddy.list >/dev/null
+    apt update >/dev/null 2>&1
+    apt install -y caddy >/dev/null 2>&1
     echo -e "${green}✓${plain} Caddy installed"
 }
 
+# --- Настройка Caddy ---
 configure_caddy() {
     echo -e "${yellow}→${plain} Configuring reverse proxy..."
-    
     cat > /etc/caddy/Caddyfile <<EOF
- $PANEL_DOMAIN:8443 {
+$PANEL_DOMAIN:8443 {
     encode gzip
     reverse_proxy 127.0.0.1:$PANEL_PORT
     tls internal
 }
-
- $SUB_DOMAIN:8443 {
+$SUB_DOMAIN:8443 {
     encode gzip
     reverse_proxy 127.0.0.1:$SUB_PORT
 }
 EOF
-    
     systemctl restart caddy
     echo -e "${green}✓${plain} Caddy configured"
 }
 
-configure_vless_reality() {
-    echo -e "\n${yellow}→${plain} Configuring VLESS Reality inbound..."
-
-    # Wait for the panel to be fully ready
-    sleep 5
-
-    # Get session cookie
-    LOGIN_RESPONSE=$(curl -s -X POST "http://127.0.0.1:${PANEL_PORT}${XUI_WEBBASE}/login" \
-        -H "Content-Type: application/json" \
-        -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}")
+# --- Создание Inbound VLESS + Reality ---
+setup_vless_reality() {
+    echo -e "${yellow}→${plain} Adding default VLESS Reality configuration..."
     
-    SESSION_COOKIE=$(echo "$LOGIN_RESPONSE" | jq -r '.session')
-    if [[ "$SESSION_COOKIE" == "null" || -z "$SESSION_COOKIE" ]]; then
-        echo -e "${red}✗ Failed to log in to 3X-UI API. Cannot create VLESS Reality inbound.${plain}"
-        echo "Response: $LOGIN_RESPONSE"
+    sleep 5 # Ждем, пока панель запустится
+    
+    TOKEN=$(/usr/local/x-ui/x-ui auth)
+    if [[ -z "$TOKEN" ]]; then
+        echo -e "${red}✗ Failed to get API token. Panel may not be ready.${plain}"
         return
     fi
 
-    # Generate Reality keys
-    echo -e "${yellow}→${plain} Generating Reality key pair..."
-    XRAY_BINARY="/usr/local/x-ui/bin/xray-linux-$(arch)"
-    KEY_PAIR=$($XRAY_BINARY x25519 -i)
-    PRIVATE_KEY=$(echo "$KEY_PAIR" | grep "Private" | awk '{print $3}')
-    PUBLIC_KEY=$(echo "$KEY_PAIR" | grep "Public" | awk '{print $3}')
-    CLIENT_ID=$(uuidgen)
-    SERVER_NAME="www.microsoft.com"
+    # Генерация UUID, ключей и short_ids
+    VLESS_UUID=$(uuidgen)
+    REALITY_PUBLIC_KEY=$(LC_ALL=C tr -dc 'a-f0-9' </dev/urandom | fold -w 64 | head -n 1)
+    SHORT_ID1=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 8 | head -n 1)
+    SHORT_ID2=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 8 | head -n 1)
 
-    # Find a random free port
-    REALITY_PORT=$((10000 + RANDOM % 35535))
-    while netstat -tuln | grep -q ":$REALITY_PORT "; do
-        REALITY_PORT=$((10000 + RANDOM % 35535))
-    done
-
-    # JSON data for the new inbound
-    INBOUND_DATA=$(cat <<EOF
-{
-    "remark": "VLESS-Reality-Auto",
-    "listen": "0.0.0.0",
-    "port": $REALITY_PORT,
-    "protocol": "vless",
-    "settings": {
-        "clients": [
-            {
-                "id": "${CLIENT_ID}",
-                "flow": "xtls-rprx-vision"
-            }
-        ],
-        "decryption": "none"
-    },
-    "streamSettings": {
-        "network": "tcp",
-        "security": "reality",
-        "realitySettings": {
-            "show": false,
-            "dest": "${SERVER_NAME}:443",
-            "xver": 1,
-            "serverNames": [
-                "${SERVER_NAME}"
-            ],
-            "privateKey": "${PRIVATE_KEY}",
-            "publicKey": "${PUBLIC_KEY}",
-            "maxTimeDiff": 0,
-            "shortIds": [
-                "$(LC_ALL=C tr -dc '0-9a-f' </dev/urandom | fold -w 8 | head -n 1)"
-            ]
-        },
-        "tcpSettings": {
-            "acceptProxyProtocol": false,
-            "header": {
-                "type": "none"
-            }
-        }
-    },
-    "sniffing": {
-        "enabled": true,
-        "destOverride": [
-            "http",
-            "tls"
-        ]
-    }
-}
-EOF
-)
-
-    # Create the inbound via API
-    ADD_RESPONSE=$(curl -s -X POST "http://127.0.0.1:${PANEL_PORT}${XUI_WEBBASE}/panel/api/inbounds/add" \
+    # Создание inbound через API
+    curl -s -X POST "http://127.0.0.1:${PANEL_PORT}/v1/proxies" \
+        -H "Authorization: Bearer $TOKEN" \
         -H "Content-Type: application/json" \
-        -H "Accept: application/json" \
-        -H "Cookie: session=${SESSION_COOKIE}" \
-        -d "$INBOUND_DATA")
-
-    if echo "$ADD_RESPONSE" | jq -e '.success' > /dev/null; then
-        echo -e "${green}✓${plain} VLESS Reality inbound created successfully on port ${magenta}${REALITY_PORT}${plain}"
-        # Store details for summary
-        VLESS_REALITY_PORT=$REALITY_PORT
-        VLESS_REALITY_UUID=$CLIENT_ID
-        VLESS_REALITY_PUB_KEY=$PUBLIC_KEY
-        VLESS_REALITY_SERVER_NAME=$SERVER_NAME
-    else
-        echo -e "${red}✗${plain} Failed to create VLESS Reality inbound."
-        echo "API Response: $ADD_RESPONSE"
-    fi
+        -d "{
+            \"name\": \"vless_reality_default\",
+            \"type\": \"vless\",
+            \"uuid\": \"${VLESS_UUID}\",
+            \"flow\": \"xtls-rprx-direct\",
+            \"listen\": \"\",
+            \"network\": \"tcp\",
+            \"security\": \"reality\",
+            \"reality_opts\": {
+                \"public_key\": \"${REALITY_PUBLIC_KEY}\",
+                \"short_ids\": [\"${SHORT_ID1}\",\"${SHORT_ID2}\"]
+            }
+        }"
+    echo -e "${green}✓ Default VLESS Reality configuration added${plain}"
 }
 
-show_commands() {
-    echo -e "\n${cyan}┌ Available Commands${plain}"
-    echo -e "${cyan}│${plain}"
-    echo -e "${cyan}│${plain}  ${magenta}x-ui${plain}              Admin management"
-    echo -e "${cyan}│${plain}  ${magenta}x-ui start${plain}        Start service"
-    echo -e "${cyan}│${plain}  ${magenta}x-ui stop${plain}         Stop service"
-    echo -e "${cyan}│${plain}  ${magenta}x-ui restart${plain}      Restart service"
-    echo -e "${cyan}│${plain}  ${magenta}x-ui status${plain}       Check status"
-    echo -e "${cyan}│${plain}  ${magenta}x-ui settings${plain}     View settings"
-    echo -e "${cyan}│${plain}  ${magenta}x-ui update${plain}       Update panel"
-    echo -e "${cyan}│${plain}  ${magenta}x-ui uninstall${plain}    Remove panel"
-    echo -e "${cyan}│${plain}"
-    echo -e "${cyan}└${plain}"
-}
-
+# --- Показать сводку ---
 show_summary() {
     sleep 2
-    
-    # Get actual settings
     PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>/dev/null)
     ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
     ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+')
@@ -365,37 +261,22 @@ show_summary() {
     echo -e "${cyan}│${plain}"
     echo -e "${cyan}└${plain}"
     
-    if [[ -n "$VLESS_REALITY_PORT" ]]; then
-        echo -e "\n${cyan}┌ VLESS Reality Configuration${plain}"
-        echo -e "${cyan}│${plain}"
-        echo -e "${cyan}│${plain}  Protocol       ${green}VLESS / REALITY${plain}"
-        echo -e "${cyan}│${plain}  Address        ${green}${SERVER_IP}${plain}"
-        echo -e "${cyan}│${plain}  Port           ${green}${VLESS_REALITY_PORT}${plain}"
-        echo -e "${cyan}│${plain}  User ID (UUID) ${green}${VLESS_REALITY_UUID}${plain}"
-        echo -e "${cyan}│${plain}  Flow           ${green}xtls-rprx-vision${plain}"
-        echo -e "${cyan}│${plain}  Public Key     ${green}${VLESS_REALITY_PUB_KEY}${plain}"
-        echo -e "${cyan}│${plain}  Server Name    ${green}${VLESS_REALITY_SERVER_NAME}${plain}"
-        echo -e "${cyan}│${plain}"
-        echo -e "${cyan}└${plain}"
-    fi
-    
     echo -e "\n${yellow}⚠  Panel is not secure with SSL certificate${plain}"
     echo -e "${yellow}   Configure SSL in panel settings for production${plain}"
-    
-    show_commands
     
     echo -e "\n${green}✓ Ready to use!${plain}\n"
 }
 
-# Main execution
+# --- Main ---
 main() {
     print_banner
+    read_credentials
     read_parameters
     install_base
     install_3xui
     install_caddy
     configure_caddy
-    configure_vless_reality
+    setup_vless_reality
     show_summary
 }
 
