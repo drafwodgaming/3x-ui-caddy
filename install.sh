@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.1
+#UPDATE 2.12
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -302,7 +302,7 @@ api_login() {
     fi
     
     local response=$(curl -k -s -c /tmp/xui_cookies.txt -X POST \
-        "${PANEL_URL}login" \
+        "${PANEL_URL}/login" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
         -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" 2>/dev/null)
