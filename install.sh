@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.12
+#UPDATE
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -302,7 +302,7 @@ generate_reality_keys() {
 
 create_vless_reality_inbound() {
     echo -e "${yellow}→${plain} Creating VLESS Reality inbound..."
-    
+
     # Generate client UUID
     CLIENT_UUID=$(generate_uuid)
     if [[ -z "$CLIENT_UUID" ]]; then
@@ -310,7 +310,7 @@ create_vless_reality_inbound() {
         return 1
     fi
     echo -e "${cyan}│${plain} UUID generated"
-    
+
     # Generate Reality keys
     generate_reality_keys
     if [[ -z "$REALITY_PRIVATE_KEY" || -z "$REALITY_PUBLIC_KEY" ]]; then
@@ -318,81 +318,94 @@ create_vless_reality_inbound() {
         return 1
     fi
     echo -e "${cyan}│${plain} Reality keys generated"
-    
+
     # Generate short ID
     SHORT_ID=$(openssl rand -hex 8)
-    
-    # Create inbound JSON
-   # Создание inbound_json
-inbound_json=$(jq -n \
-  --arg port "$REALITY_PORT" \
-  --arg uuid "$CLIENT_UUID" \
-  --arg email "$CLIENT_EMAIL" \
-  --arg dest "$REALITY_DEST" \
-  --arg sni "$REALITY_SNI" \
-  --arg privkey "$REALITY_PRIVATE_KEY" \
-  --arg shortid "$SHORT_ID" \
-  '{
-    enable: true,
-    port: ($port|tonumber),
-    protocol: "vless",
-    settings: {
-      clients: [
-        {
-          id: $uuid,
-          flow: "xtls-rprx-vision",
-          email: $email,
-          limitIp: 0,
-          totalGB: 0,
-          expiryTime: 0,
-          enable: true,
-          tgId: "",
-          subId: ""
-        }
-      ],
-      decryption: "none",
-      fallbacks: []
-    },
-    streamSettings: {
-      network: "tcp",
-      security: "reality",
-      realitySettings: {
-        show: false,
-        dest: $dest,
-        xver: 0,
-        serverNames: [$sni],
-        privateKey: $privkey,
-        minClientVer: "",
-        maxClientVer: "",
-        maxTimeDiff: 0,
-        shortIds: [$shortid]
-      },
-      tcpSettings: {
-        acceptProxyProtocol: false,
-        header: { type: "none" }
-      }
-    },
-    sniffing: { enabled: true, destOverride: ["http","tls","quic","fakedns"], metadataOnly: false, routeOnly: false },
-    remark: "VLESS-Reality-Vision",
-    listen: "",
-    allocate: { strategy: "always", refresh: 5, concurrency: 3 }
-  }'
-)
 
+    # Create settings JSON as string
+    settings_json=$(jq -n \
+        --arg id "$CLIENT_UUID" \
+        --arg flow "xtls-rprx-vision" \
+        --arg email "$CLIENT_EMAIL" \
+        '{
+            clients: [
+                {
+                    id: $id,
+                    flow: $flow,
+                    email: $email,
+                    limitIp: 0,
+                    totalGB: 0,
+                    expiryTime: 0,
+                    enable: true,
+                    tgId: "",
+                    subId: ""
+                }
+            ],
+            decryption: "none",
+            fallbacks: []
+        } | @json'
+    )
 
-    
+    # Create streamSettings JSON as string
+    stream_json=$(jq -n \
+        --arg dest "$REALITY_DEST" \
+        --arg sni "$REALITY_SNI" \
+        --arg privkey "$REALITY_PRIVATE_KEY" \
+        --arg shortid "$SHORT_ID" \
+        '{
+            network: "tcp",
+            security: "reality",
+            realitySettings: {
+                show: false,
+                dest: $dest,
+                xver: 0,
+                serverNames: [$sni],
+                privateKey: $privkey,
+                minClientVer: "",
+                maxClientVer: "",
+                maxTimeDiff: 0,
+                shortIds: [$shortid]
+            },
+            tcpSettings: {
+                acceptProxyProtocol: false,
+                header: { type: "none" }
+            }
+        } | @json'
+    )
+
+    # Assemble full inbound JSON
+    inbound_json=$(jq -n \
+        --argjson enable true \
+        --arg port "$REALITY_PORT" \
+        --arg protocol "vless" \
+        --arg settings "$settings_json" \
+        --arg stream "$stream_json" \
+        --arg remark "VLESS-Reality-Vision" \
+        --arg listen "" \
+        --arg allocate '{"strategy":"always","refresh":5,"concurrency":3}' \
+        '{
+            enable: $enable,
+            port: ($port|tonumber),
+            protocol: $protocol,
+            settings: $settings,
+            streamSettings: $stream,
+            remark: $remark,
+            listen: $listen,
+            allocate: $allocate
+        }'
+    )
+
     # Send API request
-    # ИЗМЕНЕНО: Заменен ${ACTUAL_PORT} на 8443 для подключения через Caddy
     local response=$(curl -k -s -b /tmp/xui_cookies.txt -X POST \
         "https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}panel/api/inbounds/add" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
         -d "$inbound_json" 2>/dev/null)
-    
+
     if echo "$response" | jq -e '.success == true' >/dev/null 2>&1; then
         echo -e "${green}✓${plain} VLESS Reality inbound created"
-        
-        # Save config to file
+
+        # Save configuration to file
         cat > /root/vless_reality_config.txt <<EOF
 ═══════════════════════════════════════════════════
 VLESS Reality Configuration
@@ -418,7 +431,7 @@ Client Email: ${CLIENT_EMAIL}
 Configuration saved to: /root/vless_reality_config.txt
 ═══════════════════════════════════════════════════
 EOF
-        
+
         echo ""
         echo -e "${cyan}┌ VLESS Reality Configuration${plain}"
         echo -e "${cyan}│${plain}"
@@ -432,11 +445,11 @@ EOF
         echo -e "${cyan}│${plain}  ${yellow}Config: /root/vless_reality_config.txt${plain}"
         echo -e "${cyan}│${plain}"
         echo -e "${cyan}└${plain}"
-        
+
         return 0
     else
         echo -e "${red}✗${plain} Failed to create inbound"
-        echo "Response was: $response" # Добавим вывод ответа для отладки
+        echo "Response was: $response"
         return 1
     fi
 }
