@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.14
+#UPDATE 2.15
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -398,6 +398,7 @@ create_vless_reality_inbound() {
         --arg dest "$REALITY_DEST" \
         --arg sni "$REALITY_SNI" \
         --arg privkey "$REALITY_PRIVATE_KEY" \
+        --arg publicKey "$REALITY_PUBLIC_KEY" \
         --arg shortid "$SHORT_ID" \
         --arg remark "VLESS-Reality-Vision" \
         '{
@@ -420,6 +421,7 @@ create_vless_reality_inbound() {
                         dest: $dest,
                         xver: 0,
                         serverNames: [$sni],
+                        publicKey: $publicKey,
                         privateKey: $privkey,
                         minClientVer: "",
                         maxClientVer: "",
