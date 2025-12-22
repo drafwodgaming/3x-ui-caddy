@@ -1,4 +1,33 @@
-#!/usr/bin/env bash
+# --- API Login ---
+api_login() {
+    local max_attempts=10
+    local attempt=1
+    
+    echo -e "${cyan}│${plain} Attempting login to panel..."
+    echo -e "${cyan}│${plain}   URL: http://127.0.0.1:${PANEL_PORT}${config_webBasePath}/login"
+    echo -e "${cyan}│${plain}   Username: ${XUI_USERNAME}"
+    
+    while [ $attempt -le $max_attempts ]; do
+        local response=$(curl -s -X POST "http://127.0.0.1:${PANEL_PORT}${config_webBasePath}/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" \
+            -c /tmp/x-ui-cookie.txt)
+        
+        if echo "$response" | grep -q "success"; then
+            echo -e "${green}✓${plain} API login successful"
+            return 0
+        fi
+        
+        echo -e "${yellow}⟳${plain} Waiting for panel... (attempt $attempt/$max_attempts)"
+        echo -e "${cyan}│${plain}   Response: $response"
+        sleep 3
+        ((attempt++))
+    done
+    
+    echo -e "${red}✗ API login failed after $max_attempts attempts${plain}"
+    echo -e "${red}│${plain} Last response: $response"
+    return 1
+}#!/usr/bin/env bash
 set -e
 
 red='\033[0;31m'
@@ -164,6 +193,9 @@ install_3xui() {
     systemctl start x-ui
     
     /usr/local/x-ui/x-ui migrate >/dev/null 2>&1
+    
+    # Store webBasePath globally for API calls
+    export config_webBasePath
     
     echo -e "${green}✓${plain} 3x-ui ${tag_version} installed"
 }
