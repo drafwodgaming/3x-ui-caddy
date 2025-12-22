@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.12
+#UPDATE 2.11
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -249,7 +249,8 @@ show_summary() {
     ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+' | tr -d '[:space:]')
     # Ensure webBasePath starts with / if it's not empty
     # Remove trailing slash from webBasePath to avoid double slashes
-    ACTUAL_WEBBASE=$(echo "$ACTUAL_WEBBASE" | sed 's:/*$::')
+ACTUAL_WEBBASE=$(echo "$ACTUAL_WEBBASE" | sed 's|\(/[^/]*\).*|\1/|')
+
     SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org | tr -d '[:space:]')
     
     clear
@@ -302,7 +303,7 @@ api_login() {
     fi
     
     local response=$(curl -k -s -c /tmp/xui_cookies.txt -X POST \
-        "${PANEL_URL}/login" \
+        "${PANEL_URL}login" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
         -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" 2>/dev/null)
