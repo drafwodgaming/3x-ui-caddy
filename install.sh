@@ -2,10 +2,9 @@
 set -e
 
 # =========================================
-#   3X-UI + Caddy Installer + Auto Inbound
+#   3X-UI + Caddy Installer
 # =========================================
 
-# Цвета
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -14,17 +13,31 @@ cyan='\033[0;36m'
 magenta='\033[0;35m'
 plain='\033[0m'
 
+# Check root
 [[ $EUID -ne 0 ]] && echo -e "${red}✗ Error:${plain} Root privileges required" && exit 1
 
-# Detect OS
-if [[ -f /etc/os-release ]]; then source /etc/os-release; fi
+# Check OS
+if [[ -f /etc/os-release ]]; then
+    source /etc/os-release
+    release=$ID
+elif [[ -f /usr/lib/os-release ]]; then
+    source /usr/lib/os-release
+    release=$ID
+else
+    echo -e "${red}✗ Failed to detect OS${plain}"
+    exit 1
+fi
 
 arch() {
     case "$(uname -m)" in
-        x86_64) echo 'amd64' ;;
-        arm64|aarch64) echo 'arm64' ;;
-        armv7*) echo 'armv7' ;;
-        *) echo 'amd64' ;;
+        x86_64 | x64 | amd64) echo 'amd64' ;;
+        i*86 | x86) echo '386' ;;
+        armv8* | armv8 | arm64 | aarch64) echo 'arm64' ;;
+        armv7* | armv7 | arm) echo 'armv7' ;;
+        armv6* | armv6) echo 'armv6' ;;
+        armv5* | armv5) echo 'armv5' ;;
+        s390x) echo 's390x' ;;
+        *) echo -e "${red}✗ Unsupported architecture${plain}" && exit 1 ;;
     esac
 }
 
@@ -33,70 +46,134 @@ print_banner() {
     echo -e "${cyan}"
     echo "  ╭─────────────────────────────────────────╮"
     echo "  │                                         │"
-    echo "  │       3X-UI + CADDY INSTALLER          │"
+    echo "  │       3X-UI + CADDY INSTALLER           │"
     echo "  │                                         │"
     echo "  ╰─────────────────────────────────────────╯"
     echo -e "${plain}"
 }
 
-read_credentials() {
-    echo -e "${blue}┌ Panel Credentials${plain}"
-    echo -e "${blue}│${plain}"
-    read -rp "$(echo -e ${blue}│${plain}) Username (leave empty to generate): " XUI_USERNAME
-    read -rp "$(echo -e ${blue}│${plain}) Password (leave empty to generate): " XUI_PASSWORD
-    [[ -z "$XUI_USERNAME" ]] && XUI_USERNAME=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 10 | head -n1)
-    [[ -z "$XUI_PASSWORD" ]] && XUI_PASSWORD=$(LC_ALL=C tr -dc 'a-zA-Z0-9!@#%&*' </dev/urandom | fold -w $((20 + RANDOM % 11)) | head -n1)
-    echo -e "${blue}└${plain}"
-}
-
 read_parameters() {
     echo -e "${blue}┌ Configuration${plain}"
     echo -e "${blue}│${plain}"
+
     read -rp "$(echo -e ${blue}│${plain}) Panel port [8080]: " PANEL_PORT
     PANEL_PORT=${PANEL_PORT:-8080}
+
+    read -rp "$(echo -e ${blue}│${plain}) Subscription port [2096]: " SUB_PORT
+    SUB_PORT=${SUB_PORT:-2096}
+
     read -rp "$(echo -e ${blue}│${plain}) Panel domain: " PANEL_DOMAIN
     read -rp "$(echo -e ${blue}│${plain}) Subscription domain: " SUB_DOMAIN
+
+    read -rp "$(echo -e ${blue}│${plain}) Panel username (leave empty to auto-generate): " XUI_USERNAME
+    XUI_USERNAME=${XUI_USERNAME:-$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 10 | head -n 1)}
+
+    read -rp "$(echo -e ${blue}│${plain}) Panel password (leave empty to auto-generate): " XUI_PASSWORD
+    XUI_PASSWORD=${XUI_PASSWORD:-$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 20 | head -n 1)}
+
     echo -e "${blue}└${plain}"
 }
 
 install_base() {
     echo -e "\n${yellow}→${plain} Installing dependencies..."
-    apt-get update -y >/dev/null 2>&1
-    apt-get install -y wget curl tar jq sqlite3 ca-certificates gnupg >/dev/null 2>&1
+    case "${release}" in
+        ubuntu | debian | armbian)
+            apt-get update >/dev/null 2>&1 && apt-get install -y -q wget curl tar tzdata sqlite3 jq >/dev/null 2>&1
+        ;;
+        fedora | amzn | virtuozzo | rhel | almalinux | rocky | ol)
+            dnf -y update >/dev/null 2>&1 && dnf install -y -q wget curl tar tzdata sqlite jq >/dev/null 2>&1
+        ;;
+        centos)
+            if [[ "${VERSION_ID}" =~ ^7 ]]; then
+                yum -y update >/dev/null 2>&1 && yum install -y wget curl tar tzdata sqlite jq >/dev/null 2>&1
+            else
+                dnf -y update >/dev/null 2>&1 && dnf install -y -q wget curl tar tzdata sqlite jq >/dev/null 2>&1
+            fi
+        ;;
+        *)
+            apt-get update >/dev/null 2>&1 && apt-get install -y -q wget curl tar tzdata sqlite3 jq >/dev/null 2>&1
+        ;;
+    esac
     echo -e "${green}✓${plain} Dependencies installed"
 }
 
 install_3xui() {
     echo -e "${yellow}→${plain} Installing 3x-ui..."
+    
     cd /usr/local/
-    tag=$(curl -s "https://api.github.com/repos/drafwodgaming/3x-ui-caddy/releases/latest" | jq -r .tag_name)
-    wget -q "https://github.com/drafwodgaming/3x-ui-caddy/releases/download/${tag}/x-ui-linux-$(arch).tar.gz"
-    tar xzf x-ui-linux-$(arch).tar.gz
-    rm -f x-ui-linux-$(arch).tar.gz
-    mv x-ui /usr/local/x-ui
-    chmod +x /usr/local/x-ui/x-ui
-    /usr/local/x-ui/x-ui setting -username "$XUI_USERNAME" -password "$XUI_PASSWORD" -port "$PANEL_PORT" >/dev/null 2>&1
-    cp x-ui.service /etc/systemd/system/
+    
+    # Get latest version
+    tag_version=$(curl -Ls "https://api.github.com/repos/drafwodgaming/3x-ui-caddy/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    if [[ ! -n "$tag_version" ]]; then
+        tag_version=$(curl -4 -Ls "https://api.github.com/repos/drafwodgaming/3x-ui-caddy/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+        [[ ! -n "$tag_version" ]] && echo -e "${red}✗ Failed to fetch version${plain}" && exit 1
+    fi
+    
+    wget --inet4-only -q -O /usr/local/x-ui-linux-$(arch).tar.gz \
+        https://github.com/drafwodgaming/3x-ui-caddy/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz
+    
+    [[ $? -ne 0 ]] && echo -e "${red}✗ Download failed${plain}" && exit 1
+    
+    wget --inet4-only -q -O /usr/bin/x-ui-temp \
+        https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/main/x-ui.sh
+    
+    # Stop old service
+    if [[ -e /usr/local/x-ui/ ]]; then
+        systemctl stop x-ui 2>/dev/null || true
+        rm /usr/local/x-ui/ -rf
+    fi
+    
+    # Extract
+    tar zxf x-ui-linux-$(arch).tar.gz >/dev/null 2>&1
+    rm x-ui-linux-$(arch).tar.gz -f
+    
+    cd x-ui
+    chmod +x x-ui x-ui.sh
+    
+    if [[ $(arch) == "armv5" || $(arch) == "armv6" || $(arch) == "armv7" ]]; then
+        mv bin/xray-linux-$(arch) bin/xray-linux-arm
+        chmod +x bin/xray-linux-arm
+    fi
+    chmod +x x-ui bin/xray-linux-$(arch)
+    
+    mv -f /usr/bin/x-ui-temp /usr/bin/x-ui
+    chmod +x /usr/bin/x-ui
+    
+    # Configure panel with username/password
+    /usr/local/x-ui/x-ui setting -username "${XUI_USERNAME}" -password "${XUI_PASSWORD}" \
+        -port "${PANEL_PORT}" >/dev/null 2>&1
+    
+    # Create default inbound
+    /usr/local/x-ui/x-ui add inbound --port "${PANEL_PORT}" --protocol vmess --settings '{}' >/dev/null 2>&1
+    
+    cp -f x-ui.service /etc/systemd/system/
     systemctl daemon-reload
     systemctl enable x-ui >/dev/null 2>&1
     systemctl start x-ui
+    
     /usr/local/x-ui/x-ui migrate >/dev/null 2>&1
-    echo -e "${green}✓${plain} 3x-ui installed"
+    
+    echo -e "${green}✓${plain} 3x-ui ${tag_version} installed"
 }
 
 install_caddy() {
     echo -e "${yellow}→${plain} Installing Caddy..."
+    
+    apt update >/dev/null 2>&1 && apt install -y ca-certificates curl gnupg >/dev/null 2>&1
     install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --dearmor -o /etc/apt/keyrings/caddy.gpg
+    curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key 2>/dev/null \
+        | gpg --dearmor -o /etc/apt/keyrings/caddy.gpg 2>/dev/null
     echo "deb [signed-by=/etc/apt/keyrings/caddy.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main" \
-         > /etc/apt/sources.list.d/caddy.list
-    apt update -y >/dev/null 2>&1
+        | tee /etc/apt/sources.list.d/caddy.list >/dev/null
+    apt update >/dev/null 2>&1
     apt install -y caddy >/dev/null 2>&1
+    
     echo -e "${green}✓${plain} Caddy installed"
 }
 
 configure_caddy() {
-    echo -e "${yellow}→${plain} Configuring Caddy..."
+    echo -e "${yellow}→${plain} Configuring reverse proxy..."
+    
     cat > /etc/caddy/Caddyfile <<EOF
 $PANEL_DOMAIN:8443 {
     encode gzip
@@ -106,64 +183,36 @@ $PANEL_DOMAIN:8443 {
 
 $SUB_DOMAIN:8443 {
     encode gzip
-    reverse_proxy 127.0.0.1:$PANEL_PORT
+    reverse_proxy 127.0.0.1:$SUB_PORT
 }
 EOF
+    
     systemctl restart caddy
     echo -e "${green}✓${plain} Caddy configured"
 }
 
-login_panel() {
-    echo -e "${yellow}→${plain} Logging in to panel API..."
-    curl -s -c /tmp/xui_cookies.txt -X POST "http://127.0.0.1:$PANEL_PORT/login" \
-         -H "Content-Type: application/json" \
-         -d "{\"username\":\"$XUI_USERNAME\",\"password\":\"$XUI_PASSWORD\"}"
-}
-
-create_inbound() {
-    echo -e "${yellow}→${plain} Adding default VLESS Reality inbound..."
-    VLESS_UUID=$(uuidgen)
-    PUBLIC_KEY=$(LC_ALL=C tr -dc 'a-f0-9' </dev/urandom | fold -w 64 | head -n1)
-    SHORT1=$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | fold -w 8 | head -n1)
-    SHORT2=$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | fold -w 8 | head -n1)
-
-    curl -s -b /tmp/xui_cookies.txt -H "Content-Type: application/json" \
-         -X POST "http://127.0.0.1:$PANEL_PORT/panel/api/inbounds/add" \
-         -d "{
-            \"remark\": \"Auto VLESS Reality\",
-            \"port\": 443,
-            \"protocol\": \"vless\",
-            \"settings\": {\"clients\":[{\"id\":\"$VLESS_UUID\",\"email\":\"user1\",\"enable\":true}]},
-            \"streamSettings\": {
-                \"network\":\"tcp\",
-                \"security\":\"reality\",
-                \"realitySettings\":{\"publicKey\":\"$PUBLIC_KEY\",\"shortIds\":[\"$SHORT1\",\"$SHORT2\"]}
-            }
-         }"
-    echo -e "${green}✓${plain} Inbound added"
-}
-
-add_client() {
-    echo -e "${yellow}→${plain} Adding a client to the inbound..."
-    INBOUND_ID=$(curl -s -b /tmp/xui_cookies.txt "http://127.0.0.1:$PANEL_PORT/panel/api/inbounds/list" \
-                 | jq -r '.[0].id')
-    CLIENT_UUID=$(uuidgen)
-    SUB_ID=$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | fold -w 12 | head -n1)
-
-    curl -s -b /tmp/xui_cookies.txt -H "Content-Type: multipart/form-data" \
-         -F "id=$INBOUND_ID" \
-         -F "settings={\"clients\":[{\"id\":\"$CLIENT_UUID\",\"email\":\"$SUB_ID\",\"enable\":true}]}" \
-         "http://127.0.0.1:$PANEL_PORT/panel/api/inbounds/addClient"
-
-    echo "Client $SUB_ID with UUID $CLIENT_UUID added."
+show_commands() {
+    echo -e "\n${cyan}┌ Available Commands${plain}"
+    echo -e "${cyan}│${plain}"
+    echo -e "${cyan}│${plain}  ${magenta}x-ui${plain}              Admin management"
+    echo -e "${cyan}│${plain}  ${magenta}x-ui start${plain}        Start service"
+    echo -e "${cyan}│${plain}  ${magenta}x-ui stop${plain}         Stop service"
+    echo -e "${cyan}│${plain}  ${magenta}x-ui restart${plain}      Restart service"
+    echo -e "${cyan}│${plain}  ${magenta}x-ui status${plain}       Check status"
+    echo -e "${cyan}│${plain}  ${magenta}x-ui settings${plain}     View settings"
+    echo -e "${cyan}│${plain}  ${magenta}x-ui update${plain}       Update panel"
+    echo -e "${cyan}│${plain}  ${magenta}x-ui uninstall${plain}    Remove panel"
+    echo -e "${cyan}│${plain}"
+    echo -e "${cyan}└${plain}"
 }
 
 show_summary() {
-    SERVER_IP=$(curl -s ifconfig.me || echo "127.0.0.1")
+    sleep 2
+    
     PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>/dev/null)
     ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
-    ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+')
-
+    SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
+    
     clear
     echo -e "${green}"
     echo "  ╭─────────────────────────────────────────╮"
@@ -172,38 +221,38 @@ show_summary() {
     echo "  │                                         │"
     echo "  ╰─────────────────────────────────────────╯"
     echo -e "${plain}"
-
+    
     echo -e "${cyan}┌ Credentials${plain}"
     echo -e "${cyan}│${plain}"
     echo -e "${cyan}│${plain}  Username    ${green}${XUI_USERNAME}${plain}"
     echo -e "${cyan}│${plain}  Password    ${green}${XUI_PASSWORD}${plain}"
+    echo -e "${cyan}│${plain}"
     echo -e "${cyan}└${plain}"
-
+    
     echo -e "\n${cyan}┌ Access URLs${plain}"
     echo -e "${cyan}│${plain}"
-    echo -e "${cyan}│${plain}  Panel (HTTPS)    ${blue}https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}${plain}"
-    echo -e "${cyan}│${plain}  Panel (Direct)   ${blue}http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}${plain}"
+    echo -e "${cyan}│${plain}  Panel (HTTPS)    ${blue}https://${PANEL_DOMAIN}:8443${plain}"
+    echo -e "${cyan}│${plain}  Panel (Direct)   ${blue}http://${SERVER_IP}:${ACTUAL_PORT}${plain}"
     echo -e "${cyan}│${plain}  Subscription     ${blue}https://${SUB_DOMAIN}:8443/${plain}"
+    echo -e "${cyan}│${plain}"
     echo -e "${cyan}└${plain}"
-
+    
     echo -e "\n${yellow}⚠  Panel is not secure with SSL certificate${plain}"
     echo -e "${yellow}   Configure SSL in panel settings for production${plain}"
-
+    
+    show_commands
+    
     echo -e "\n${green}✓ Ready to use!${plain}\n"
 }
 
+# Main execution
 main() {
     print_banner
-    read_credentials
     read_parameters
     install_base
     install_3xui
     install_caddy
     configure_caddy
-    sleep 5
-    login_panel
-    create_inbound
-    add_client
     show_summary
 }
 
