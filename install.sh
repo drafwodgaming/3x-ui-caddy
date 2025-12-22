@@ -2,7 +2,7 @@
 set -e
 
 # =========================================
-#   3X-UI + Caddy Installer (Modified)
+#   3X-UI + Caddy Installer (Modified v2)
 # =========================================
 
 red='\033[0;31m'
@@ -21,7 +21,7 @@ if [[ -f /etc/os-release ]]; then
     source /etc/os-release
     release=$ID
 elif [[ -f /usr/lib/os-release ]]; then
-    source /usr/lib/os-release
+    source /etc/lib/os-release
     release=$ID
 else
     echo -e "${red}✗ Failed to detect OS${plain}"
@@ -179,14 +179,15 @@ install_3xui() {
 install_caddy() {
     echo -e "${yellow}→${plain} Installing Caddy..."
     
-    apt update >/dev/null 2>&1 && apt install -y ca-certificates curl gnupg >/dev/null 2>&1
-    install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key 2>/dev/null \
-        | gpg --dearmor -o /etc/apt/keyrings/caddy.gpg 2>/dev/null
-    echo "deb [signed-by=/etc/apt/keyrings/caddy.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main" \
-        | tee /etc/apt/sources.list.d/caddy.list >/dev/null
-    apt update >/dev/null 2>&1
-    apt install -y caddy >/dev/null 2>&1
+    # Use a generic installation method that works for most Debian/Ubuntu-based systems
+    # For other systems, this might need adjustment, but the original script was also Debian-centric
+    if ! command -v caddy &> /dev/null; then
+        apt update >/dev/null 2>&1 && apt install -y debian-keyring debian-archive-keyring apt-transport-https >/dev/null 2>&1
+        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg >/dev/null 2>&1
+        echo "deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main" | tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
+        apt update >/dev/null 2>&1
+        apt install -y caddy >/dev/null 2>&1
+    fi
     
     echo -e "${green}✓${plain} Caddy installed"
 }
@@ -223,10 +224,20 @@ configure_vless_reality() {
         -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}")
     
     SESSION_COOKIE=$(echo "$LOGIN_RESPONSE" | jq -r '.session')
-    if [[ "$SESSION_COOKIE" == "null" ]]; then
+    if [[ "$SESSION_COOKIE" == "null" || -z "$SESSION_COOKIE" ]]; then
         echo -e "${red}✗ Failed to log in to 3X-UI API. Cannot create VLESS Reality inbound.${plain}"
+        echo "Response: $LOGIN_RESPONSE"
         return
     fi
+
+    # Generate Reality keys
+    echo -e "${yellow}→${plain} Generating Reality key pair..."
+    XRAY_BINARY="/usr/local/x-ui/bin/xray-linux-$(arch)"
+    KEY_PAIR=$($XRAY_BINARY x25519 -i)
+    PRIVATE_KEY=$(echo "$KEY_PAIR" | grep "Private" | awk '{print $3}')
+    PUBLIC_KEY=$(echo "$KEY_PAIR" | grep "Public" | awk '{print $3}')
+    CLIENT_ID=$(uuidgen)
+    SERVER_NAME="www.microsoft.com"
 
     # Find a random free port
     REALITY_PORT=$((10000 + RANDOM % 35535))
@@ -244,7 +255,7 @@ configure_vless_reality() {
     "settings": {
         "clients": [
             {
-                "id": "$(uuidgen)",
+                "id": "${CLIENT_ID}",
                 "flow": "xtls-rprx-vision"
             }
         ],
@@ -255,16 +266,16 @@ configure_vless_reality() {
         "security": "reality",
         "realitySettings": {
             "show": false,
-            "dest": "www.microsoft.com:443",
+            "dest": "${SERVER_NAME}:443",
             "xver": 1,
             "serverNames": [
-                "www.microsoft.com"
+                "${SERVER_NAME}"
             ],
-            "privateKey": "",
-            "publicKey": "",
+            "privateKey": "${PRIVATE_KEY}",
+            "publicKey": "${PUBLIC_KEY}",
             "maxTimeDiff": 0,
             "shortIds": [
-                ""
+                "$(LC_ALL=C tr -dc '0-9a-f' </dev/urandom | fold -w 8 | head -n 1)"
             ]
         },
         "tcpSettings": {
@@ -294,6 +305,11 @@ EOF
 
     if echo "$ADD_RESPONSE" | jq -e '.success' > /dev/null; then
         echo -e "${green}✓${plain} VLESS Reality inbound created successfully on port ${magenta}${REALITY_PORT}${plain}"
+        # Store details for summary
+        VLESS_REALITY_PORT=$REALITY_PORT
+        VLESS_REALITY_UUID=$CLIENT_ID
+        VLESS_REALITY_PUB_KEY=$PUBLIC_KEY
+        VLESS_REALITY_SERVER_NAME=$SERVER_NAME
     else
         echo -e "${red}✗${plain} Failed to create VLESS Reality inbound."
         echo "API Response: $ADD_RESPONSE"
@@ -349,6 +365,20 @@ show_summary() {
     echo -e "${cyan}│${plain}"
     echo -e "${cyan}└${plain}"
     
+    if [[ -n "$VLESS_REALITY_PORT" ]]; then
+        echo -e "\n${cyan}┌ VLESS Reality Configuration${plain}"
+        echo -e "${cyan}│${plain}"
+        echo -e "${cyan}│${plain}  Protocol       ${green}VLESS / REALITY${plain}"
+        echo -e "${cyan}│${plain}  Address        ${green}${SERVER_IP}${plain}"
+        echo -e "${cyan}│${plain}  Port           ${green}${VLESS_REALITY_PORT}${plain}"
+        echo -e "${cyan}│${plain}  User ID (UUID) ${green}${VLESS_REALITY_UUID}${plain}"
+        echo -e "${cyan}│${plain}  Flow           ${green}xtls-rprx-vision${plain}"
+        echo -e "${cyan}│${plain}  Public Key     ${green}${VLESS_REALITY_PUB_KEY}${plain}"
+        echo -e "${cyan}│${plain}  Server Name    ${green}${VLESS_REALITY_SERVER_NAME}${plain}"
+        echo -e "${cyan}│${plain}"
+        echo -e "${cyan}└${plain}"
+    fi
+    
     echo -e "\n${yellow}⚠  Panel is not secure with SSL certificate${plain}"
     echo -e "${yellow}   Configure SSL in panel settings for production${plain}"
     
@@ -365,7 +395,7 @@ main() {
     install_3xui
     install_caddy
     configure_caddy
-    configure_vless_reality # New function call
+    configure_vless_reality
     show_summary
 }
 
