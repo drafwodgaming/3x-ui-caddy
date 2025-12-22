@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.17
+#UPDATE 2.12
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -241,15 +241,12 @@ EOF
 
 
 # --- Show summary ---
-# --- Show summary ---
 show_summary() {
     sleep 2
     PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>/dev/null)
-    ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+' | tr -d '[:space:]')
-    ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+' | tr -d '[:space:]')
-    # Ensure webBasePath starts with / if it's not empty
-    # Remove trailing slash from webBasePath to avoid double slashes
-    SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org | tr -d '[:space:]')
+    ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
+    ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+')
+    SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
     
     clear
     echo -e "${green}"
@@ -271,13 +268,10 @@ show_summary() {
     echo -e "${cyan}│${plain}"
     
     if [[ "$USE_CADDY" == "true" ]]; then
-        PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
-        SUB_URL="https://${SUB_DOMAIN}:8443/"
-        echo -e "${cyan}│${plain}  Panel (HTTPS)    ${blue}${PANEL_URL}${plain}"
-        echo -e "${cyan}│${plain}  Subscription     ${blue}${SUB_URL}${plain}"
+        echo -e "${cyan}│${plain}  Panel (HTTPS)    ${blue}https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}${plain}"
+        echo -e "${cyan}│${plain}  Subscription     ${blue}https://${SUB_DOMAIN}:8443/${plain}"
     else
-        PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
-        echo -e "${cyan}│${plain}  Panel (Direct)   ${blue}${PANEL_URL}${plain}"
+        echo -e "${cyan}│${plain}  Panel (Direct)   ${blue}http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}${plain}"
     fi
     
     echo -e "${cyan}│${plain}"
@@ -391,12 +385,11 @@ create_vless_reality_inbound() {
         return 1
     fi
     echo -e "${cyan}│${plain} Reality keys generated"
-    echo -e "${cyan}│${plain} Private Key: ${REALITY_PRIVATE_KEY:0:20}..."
-    echo -e "${cyan}│${plain} Public Key:  ${REALITY_PUBLIC_KEY:0:20}..."
     
     SHORT_ID=$(openssl rand -hex 8)
 
-    # --- Создание JSON-полезной нагрузки с PUBLIC KEY ---
+    # --- Создание JSON-полезной нагрузки одним махом с помощью jq ---
+    # Фильтр @json гарантирует корректное преобразование объекта в строку
     local inbound_json
     inbound_json=$(jq -n \
         --argjson port "$REALITY_PORT" \
@@ -405,7 +398,6 @@ create_vless_reality_inbound() {
         --arg dest "$REALITY_DEST" \
         --arg sni "$REALITY_SNI" \
         --arg privkey "$REALITY_PRIVATE_KEY" \
-        --arg pubkey "$REALITY_PUBLIC_KEY" \
         --arg shortid "$SHORT_ID" \
         --arg remark "VLESS-Reality-Vision" \
         '{
@@ -414,17 +406,7 @@ create_vless_reality_inbound() {
             protocol: "vless",
             settings: (
                 {
-                    clients: [{ 
-                        id: $uuid, 
-                        flow: "xtls-rprx-vision", 
-                        email: $email, 
-                        limitIp: 0, 
-                        totalGB: 0, 
-                        expiryTime: 0, 
-                        enable: true, 
-                        tgId: "", 
-                        subId: "" 
-                    }],
+                    clients: [{ id: $uuid, flow: "xtls-rprx-vision", email: $email, limitIp: 0, totalGB: 0, expiryTime: 0, enable: true, tgId: "", subId: "" }],
                     decryption: "none",
                     fallbacks: []
                 } | @json
@@ -439,16 +421,12 @@ create_vless_reality_inbound() {
                         xver: 0,
                         serverNames: [$sni],
                         privateKey: $privkey,
-                        publicKey: $pubkey,
                         minClientVer: "",
                         maxClientVer: "",
                         maxTimeDiff: 0,
                         shortIds: [$shortid]
                     },
-                    tcpSettings: { 
-                        acceptProxyProtocol: false, 
-                        header: { type: "none" } 
-                    }
+                    tcpSettings: { acceptProxyProtocol: false, header: { type: "none" } }
                 } | @json
             ),
             sniffing: (
@@ -461,11 +439,7 @@ create_vless_reality_inbound() {
             ),
             remark: $remark,
             listen: "",
-            allocate: { 
-                strategy: "always", 
-                refresh: 5, 
-                concurrency: 3 
-            }
+            allocate: { strategy: "always", refresh: 5, concurrency: 3 }
         }'
     )
 
