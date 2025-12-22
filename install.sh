@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.11
+#UPDATE 2.12
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -323,7 +323,8 @@ create_vless_reality_inbound() {
     SHORT_ID=$(openssl rand -hex 8)
     
     # Create inbound JSON
-    local inbound_json=$(cat <<EOF
+   # Создание inbound_json
+local inbound_json=$(cat <<EOF
 {
   "enable": true,
   "port": ${REALITY_PORT},
@@ -337,6 +338,10 @@ create_vless_reality_inbound() {
 }
 EOF
 )
+
+# Сжимаем JSON в одну строку
+inbound_json=$(echo "$inbound_json" | tr -d '\n')
+
     
     # Send API request
     # ИЗМЕНЕНО: Заменен ${ACTUAL_PORT} на 8443 для подключения через Caddy
