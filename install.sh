@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.12
+#UPDATE 2.11
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -245,7 +245,7 @@ show_summary() {
     sleep 2
     PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>/dev/null)
     ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
-    ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+')
+ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | sed -n 's/.*webBasePath:[[:space:]]*\([^[:space:]]*\).*/\1/p')
     SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
     
     clear
