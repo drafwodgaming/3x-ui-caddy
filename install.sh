@@ -77,6 +77,17 @@ read_parameters() {
     
     read -rp "$(echo -e ${blue}│${plain}) Panel domain: " PANEL_DOMAIN
     read -rp "$(echo -e ${blue}│${plain}) Subscription domain: " SUB_DOMAIN
+    
+    echo -e "${blue}│${plain}"
+    read -rp "$(echo -e ${blue}│${plain}) VLESS Reality port [443]: " VLESS_PORT
+    VLESS_PORT=${VLESS_PORT:-443}
+    
+    read -rp "$(echo -e ${blue}│${plain}) Server Name (SNI) [www.google.com]: " VLESS_SNI
+    VLESS_SNI=${VLESS_SNI:-www.google.com}
+    
+    read -rp "$(echo -e ${blue}│${plain}) Client email [user@example.com]: " CLIENT_EMAIL
+    CLIENT_EMAIL=${CLIENT_EMAIL:-user@example.com}
+    
     echo -e "${blue}└${plain}"
 }
 
@@ -194,28 +205,75 @@ EOF
     echo -e "${green}✓${plain} Caddy configured"
 }
 
-# --- Configure subscription settings ---
-configure_subscription() {
-    echo -e "${yellow}→${plain} Configuring subscription settings..."
+# --- API Login ---
+api_login() {
+    local response=$(curl -s -X POST "http://127.0.0.1:${PANEL_PORT}/login" \
+        -H "Content-Type: application/json" \
+        -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" \
+        -c /tmp/x-ui-cookie.txt)
     
-    DB_PATH="/etc/x-ui/x-ui.db"
+    if echo "$response" | grep -q "success"; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# --- Add VLESS Reality Inbound ---
+add_vless_reality() {
+    echo -e "${yellow}→${plain} Creating VLESS Reality inbound..."
     
-    # Wait for database to be ready
-    sleep 3
+    # Wait for panel to be ready
+    sleep 5
     
-    # Update subscription settings in database
-    sqlite3 "$DB_PATH" <<EOF
-UPDATE settings SET value = 'https://${SUB_DOMAIN}:8443/sub/' WHERE key = 'subURI';
-UPDATE settings SET value = '/sub/' WHERE key = 'subPath';
-UPDATE settings SET value = '${SUB_PORT}' WHERE key = 'subPort';
-UPDATE settings SET value = '1' WHERE key = 'subEnable';
+    # Login to get session
+    if ! api_login; then
+        echo -e "${red}✗ API login failed${plain}"
+        return 1
+    fi
+    
+    # Generate keys
+    local uuid=$(cat /proc/sys/kernel/random/uuid)
+    local x25519_keys=$(/usr/local/x-ui/x-ui x25519)
+    local private_key=$(echo "$x25519_keys" | grep "Private key:" | awk '{print $3}')
+    local public_key=$(echo "$x25519_keys" | grep "Public key:" | awk '{print $3}')
+    local short_id=$(openssl rand -hex 8)
+    
+    # Create inbound JSON
+    local inbound_json=$(cat <<EOF
+{
+  "enable": true,
+  "remark": "VLESS-Reality-TCP",
+  "listen": "",
+  "port": ${VLESS_PORT},
+  "protocol": "vless",
+  "settings": "{\"clients\":[{\"id\":\"${uuid}\",\"email\":\"${CLIENT_EMAIL}\",\"limitIp\":0,\"totalGB\":0,\"expiryTime\":0,\"enable\":true,\"tgId\":\"\",\"subId\":\"${uuid}\",\"reset\":0}],\"decryption\":\"none\",\"fallbacks\":[]}",
+  "streamSettings": "{\"network\":\"tcp\",\"security\":\"reality\",\"externalProxy\":[],\"realitySettings\":{\"show\":false,\"xver\":0,\"dest\":\"${VLESS_SNI}:443\",\"serverNames\":[\"${VLESS_SNI}\"],\"privateKey\":\"${private_key}\",\"minClient\":\"\",\"maxClient\":\"\",\"maxTimediff\":0,\"shortIds\":[\"${short_id}\"],\"settings\":{\"publicKey\":\"${public_key}\",\"fingerprint\":\"chrome\",\"serverName\":\"\",\"spiderX\":\"/\"}},\"tcpSettings\":{\"acceptProxyProtocol\":false,\"header\":{\"type\":\"none\"}}}",
+  "sniffing": "{\"enabled\":true,\"destOverride\":[\"http\",\"tls\",\"quic\",\"fakedns\"],\"metadataOnly\":false,\"routeOnly\":false}",
+  "allocate": "{\"strategy\":\"always\",\"refresh\":5,\"concurrency\":3}"
+}
 EOF
+)
     
-    # Restart x-ui to apply changes
-    systemctl restart x-ui
-    sleep 2
+    # Add inbound via API
+    local response=$(curl -s -X POST "http://127.0.0.1:${PANEL_PORT}/panel/api/inbounds/add" \
+        -H "Content-Type: application/json" \
+        -b /tmp/x-ui-cookie.txt \
+        -d "$inbound_json")
     
-    echo -e "${green}✓${plain} Subscription configured"
+    if echo "$response" | grep -q "success"; then
+        echo -e "${green}✓${plain} VLESS Reality inbound created"
+        
+        # Store config for summary
+        VLESS_UUID="$uuid"
+        VLESS_PUBLIC_KEY="$public_key"
+        VLESS_SHORT_ID="$short_id"
+        return 0
+    else
+        echo -e "${red}✗ Failed to create inbound${plain}"
+        echo -e "${red}Response: $response${plain}"
+        return 1
+    fi
 }
 
 # --- Show summary ---
@@ -251,14 +309,20 @@ show_summary() {
     echo -e "${cyan}│${plain}"
     echo -e "${cyan}└${plain}"
     
-    echo -e "\n${cyan}┌ Subscription Settings (Auto-configured)${plain}"
-    echo -e "${cyan}│${plain}"
-    echo -e "${cyan}│${plain}  Subscription Port:        ${green}${SUB_PORT}${plain}"
-    echo -e "${cyan}│${plain}  Subscription Path:        ${green}/sub/${plain}"
-    echo -e "${cyan}│${plain}  Reverse Proxy URI:        ${green}https://${SUB_DOMAIN}:8443/sub/${plain}"
-    echo -e "${cyan}│${plain}  Subscription:             ${green}Enabled${plain}"
-    echo -e "${cyan}│${plain}"
-    echo -e "${cyan}└${plain}"
+    if [[ -n "$VLESS_UUID" ]]; then
+        echo -e "\n${cyan}┌ VLESS Reality Configuration${plain}"
+        echo -e "${cyan}│${plain}"
+        echo -e "${cyan}│${plain}  Protocol         ${green}VLESS${plain}"
+        echo -e "${cyan}│${plain}  Port             ${green}${VLESS_PORT}${plain}"
+        echo -e "${cyan}│${plain}  UUID             ${green}${VLESS_UUID}${plain}"
+        echo -e "${cyan}│${plain}  Flow             ${green}xtls-rprx-vision${plain}"
+        echo -e "${cyan}│${plain}  SNI              ${green}${VLESS_SNI}${plain}"
+        echo -e "${cyan}│${plain}  Public Key       ${green}${VLESS_PUBLIC_KEY}${plain}"
+        echo -e "${cyan}│${plain}  Short ID         ${green}${VLESS_SHORT_ID}${plain}"
+        echo -e "${cyan}│${plain}  Client Email     ${green}${CLIENT_EMAIL}${plain}"
+        echo -e "${cyan}│${plain}"
+        echo -e "${cyan}└${plain}"
+    fi
     
     echo -e "\n${yellow}⚠  Panel is using self-signed SSL certificate${plain}"
     echo -e "${yellow}   Configure real SSL in panel settings for production${plain}"
@@ -275,7 +339,7 @@ main() {
     install_3xui
     install_caddy
     configure_caddy
-    configure_subscription
+    add_vless_reality
     show_summary
 }
 
