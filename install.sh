@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.12222
+#UPDATE 2.1
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -17,7 +17,7 @@ if [[ -f /etc/os-release ]]; then
     source /etc/os-release
     release=$ID
 elif [[ -f /usr/lib/os-release ]]; then
-    source /usr/lib/os-release
+    source /usr/lib/oas-release
     release=$ID
 else
     echo -e "${red}✗ Failed to detect OS${plain}"
@@ -183,8 +183,6 @@ install_3xui() {
     chmod +x /usr/bin/x-ui
     
     config_webBasePath=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 18 | head -n 1)
-    # Add a leading slash to ensure proper URL formatting
-    config_webBasePath="/${config_webBasePath}"
     
     /usr/local/x-ui/x-ui setting -username "${XUI_USERNAME}" -password "${XUI_PASSWORD}" \
         -port "${PANEL_PORT}" -webBasePath "${config_webBasePath}" >/dev/null 2>&1
@@ -241,6 +239,7 @@ EOF
     echo -e "${green}✓${plain} Caddy configured"
 }
 
+
 # --- Show summary ---
 show_summary() {
     sleep 2
@@ -273,11 +272,11 @@ show_summary() {
     if [[ "$USE_CADDY" == "true" ]]; then
         PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
         SUB_URL="https://${SUB_DOMAIN}:8443/"
-        echo -e "${cyan}│${plain}  Panel (HTTPS)    ${blue}${PANEL_URL}${plain}"
-        echo -e "${cyan}│${plain}  Subscription     ${blue}${SUB_URL}${plain}"
+        echo -e "${cyan}│${plain}  Panel (HTTPS)    ${PANEL_URL}"
+        echo -e "${cyan}│${plain}  Subscription     ${SUB_URL}"
     else
         PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
-        echo -e "${cyan}│${plain}  Panel (Direct)   ${blue}${PANEL_URL}${plain}"
+        echo -e "${cyan}│${plain}  Panel (Direct)   ${PANEL_URL}"
     fi
     
     echo -e "${cyan}│${plain}"
@@ -291,13 +290,6 @@ show_summary() {
 
 api_login() {
     echo -e "${yellow}→${plain} Authenticating..."
-    
-    # Get the panel info to ensure we have the correct webBasePath
-    PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>/dev/null)
-    ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
-    ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+')
-    # Ensure webBasePath starts with a slash
-    [[ "$ACTUAL_WEBBASE" != /* ]] && ACTUAL_WEBBASE="/${ACTUAL_WEBBASE}"
     
     # Determine the panel URL based on whether Caddy is used
     if [[ "$USE_CADDY" == "true" ]]; then
