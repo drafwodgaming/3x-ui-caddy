@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.13
+#UPDATE 2.14
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -17,7 +17,7 @@ if [[ -f /etc/os-release ]]; then
     source /etc/os-release
     release=$ID
 elif [[ -f /usr/lib/os-release ]]; then
-    source /usr/lib/os-release
+    source /usr/lib/oas-release
     release=$ID
 else
     echo -e "${red}✗ Failed to detect OS${plain}"
@@ -322,7 +322,8 @@ generate_uuid() {
     local response=$(curl -k -s -b /tmp/xui_cookies.txt \
         "${PANEL_URL}panel/api/server/getNewUUID" 2>/dev/null)
     
-    local uuid=$(echo "$response" | jq -r '.obj // empty' 2>/dev/null)
+    # Fix: Extract just the UUID value, not the entire object
+    local uuid=$(echo "$response" | jq -r '.obj.uuid // empty' 2>/dev/null)
     
     if [[ -n "$uuid" && "$uuid" != "null" ]]; then
         echo "$uuid"
