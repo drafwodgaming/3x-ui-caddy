@@ -275,8 +275,8 @@ api_login() {
 }
 
 generate_uuid() {
-    local response=$(curl -s -b /tmp/xui_cookies.txt \
-        "http://${PANEL_DOMAIN}:${ACTUAL_PORT}/${ACTUAL_WEBBASE}/panel/api/server/getNewUUID" 2>/dev/null)
+    local response=$(curl -k -s -b /tmp/xui_cookies.txt \
+        "https://${PANEL_DOMAIN}:${ACTUAL_PORT}/${ACTUAL_WEBBASE}/panel/api/server/getNewUUID" 2>/dev/null)
     
     local uuid=$(echo "$response" | jq -r '.obj // empty' 2>/dev/null)
     
@@ -288,8 +288,8 @@ generate_uuid() {
 }
 
 generate_reality_keys() {
-    local response=$(curl -s -b /tmp/xui_cookies.txt \
-        "http://${PANEL_DOMAIN}:${ACTUAL_PORT}/${ACTUAL_WEBBASE}/panel/api/server/getNewX25519Cert" 2>/dev/null)
+    local response=$(curl -k -s -b /tmp/xui_cookies.txt \
+        "https://${PANEL_DOMAIN}:${ACTUAL_PORT}/${ACTUAL_WEBBASE}/panel/api/server/getNewX25519Cert" 2>/dev/null)
     
     REALITY_PRIVATE_KEY=$(echo "$response" | jq -r '.obj.privateKey // empty' 2>/dev/null)
     REALITY_PUBLIC_KEY=$(echo "$response" | jq -r '.obj.publicKey // empty' 2>/dev/null)
