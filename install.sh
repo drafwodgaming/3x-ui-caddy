@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.123
+#UPDATE 2.1
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -385,6 +385,8 @@ create_vless_reality_inbound() {
         return 1
     fi
     echo -e "${cyan}│${plain} Reality keys generated"
+    echo -e "${cyan}│${plain} Private Key: ${REALITY_PRIVATE_KEY:0:20}..."
+    echo -e "${cyan}│${plain} Public Key:  ${REALITY_PUBLIC_KEY:0:20}..."
     
     SHORT_ID=$(openssl rand -hex 8)
 
@@ -398,7 +400,6 @@ create_vless_reality_inbound() {
         --arg dest "$REALITY_DEST" \
         --arg sni "$REALITY_SNI" \
         --arg privkey "$REALITY_PRIVATE_KEY" \
-        --arg pubkey "$REALITY_PUBLIC_KEY" \
         --arg shortid "$SHORT_ID" \
         --arg remark "VLESS-Reality-Vision" \
         '{
@@ -422,7 +423,7 @@ create_vless_reality_inbound() {
                         xver: 0,
                         serverNames: [$sni],
                         privateKey: $privkey,
-                        publicKey: $pubkey,
+                        publicKey: "'"$REALITY_PUBLIC_KEY"'",
                         minClientVer: "",
                         maxClientVer: "",
                         maxTimeDiff: 0,
