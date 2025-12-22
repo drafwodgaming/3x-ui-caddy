@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.12
+#UPDATE 2.122
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -75,25 +75,48 @@ read_parameters() {
     read -rp "$(echo -e ${blue}│${plain}) Subscription port [2096]: " SUB_PORT
     SUB_PORT=${SUB_PORT:-2096}
     
-    read -rp "$(echo -e ${blue}│${plain}) Panel domain: " PANEL_DOMAIN
-    read -rp "$(echo -e ${blue}│${plain}) Subscription domain: " SUB_DOMAIN
+    # Only ask for domains if using Caddy
+    if [[ "$USE_CADDY" == "true" ]]; then
+        read -rp "$(echo -e ${blue}│${plain}) Panel domain: " PANEL_DOMAIN
+        read -rp "$(echo -e ${blue}│${plain}) Subscription domain: " SUB_DOMAIN
+    fi
     echo -e "${blue}│${plain}"
-    
-    # VLESS Reality настройки
+    echo -e "${blue}└${plain}"
+}
+
+# --- Ask if user wants to use Caddy ---
+ask_caddy() {
+    echo -e "${blue}┌ Caddy Configuration${plain}"
     echo -e "${blue}│${plain}"
-    echo -e "${blue}│${plain} ${magenta}VLESS Reality Configuration${plain}"
-    read -rp "$(echo -e ${blue}│${plain}) Reality port [443]: " REALITY_PORT
-    REALITY_PORT=${REALITY_PORT:-443}
-    
-    read -rp "$(echo -e ${blue}│${plain}) Reality SNI [www.google.com]: " REALITY_SNI
-    REALITY_SNI=${REALITY_SNI:-www.google.com}
-    
-    read -rp "$(echo -e ${blue}│${plain}) Reality destination [www.google.com:443]: " REALITY_DEST
-    REALITY_DEST=${REALITY_DEST:-www.google.com:443}
-    
-    read -rp "$(echo -e ${blue}│${plain}) Client email [admin@reality]: " CLIENT_EMAIL
-    CLIENT_EMAIL=${CLIENT_EMAIL:-admin@reality}
-    
+    echo -e "${blue}│${plain} Do you want to use Caddy as a reverse proxy?"
+    echo -e "${blue}│${plain} This will allow you to use domains and SSL certificates."
+    echo -e "${blue}│${plain}"
+    while true; do
+        read -rp "$(echo -e ${blue}│${plain}) Use Caddy? [y/n]: " yn
+        case $yn in
+            [Yy]* ) USE_CADDY="true"; break;;
+            [Nn]* ) USE_CADDY="false"; break;;
+            * ) echo -e "${blue}│${plain} Please answer y or n.";;
+        esac
+    done
+    echo -e "${blue}└${plain}"
+}
+
+# --- Ask if user wants to create default inbound ---
+ask_default_inbound() {
+    echo -e "${blue}┌ Default Inbound${plain}"
+    echo -e "${blue}│${plain}"
+    echo -e "${blue}│${plain} Do you want to create a default VLESS Reality inbound?"
+    echo -e "${blue}│${plain} This will create an inbound with predefined settings."
+    echo -e "${blue}│${plain}"
+    while true; do
+        read -rp "$(echo -e ${blue}│${plain}) Create default inbound? [y/n]: " yn
+        case $yn in
+            [Yy]* ) CREATE_DEFAULT_INBOUND="true"; break;;
+            [Nn]* ) CREATE_DEFAULT_INBOUND="false"; break;;
+            * ) echo -e "${blue}│${plain} Please answer y or n.";;
+        esac
+    done
     echo -e "${blue}└${plain}"
 }
 
@@ -243,23 +266,36 @@ show_summary() {
     
     echo -e "\n${cyan}┌ Access URLs${plain}"
     echo -e "${cyan}│${plain}"
-    echo -e "${cyan}│${plain}  Panel (HTTPS)    ${blue}https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}${plain}"
-    echo -e "${cyan}│${plain}  Panel (Direct)   ${blue}http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}${plain}"
-    echo -e "${cyan}│${plain}"
-    echo -e "${cyan}│${plain}  Subscription     ${blue}https://${SUB_DOMAIN}:8443/${plain}"
+    
+    if [[ "$USE_CADDY" == "true" ]]; then
+        echo -e "${cyan}│${plain}  Panel (HTTPS)    ${blue}https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}${plain}"
+        echo -e "${cyan}│${plain}  Subscription     ${blue}https://${SUB_DOMAIN}:8443/${plain}"
+    else
+        echo -e "${cyan}│${plain}  Panel (Direct)   ${blue}http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}${plain}"
+    fi
+    
     echo -e "${cyan}│${plain}"
     echo -e "${cyan}└${plain}"
     
-    echo -e "\n${yellow}⚠  Panel is not secure with SSL certificate${plain}"
-    echo -e "${yellow}   Configure SSL in panel settings for production${plain}"
+    if [[ "$USE_CADDY" == "true" ]]; then
+        echo -e "\n${yellow}⚠  Panel is not secure with SSL certificate${plain}"
+        echo -e "${yellow}   Configure SSL in panel settings for production${plain}"
+    fi
 }
 
 api_login() {
     echo -e "${yellow}→${plain} Authenticating..."
     
-    # ИЗМЕНЕНО: Добавлен недостающий слэш в URL
+    # Determine the panel URL based on whether Caddy is used
+    if [[ "$USE_CADDY" == "true" ]]; then
+        PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
+    else
+        SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
+        PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
+    fi
+    
     local response=$(curl -k -s -c /tmp/xui_cookies.txt -X POST \
-        "https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}login" \
+        "${PANEL_URL}login" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
         -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" 2>/dev/null)
@@ -275,9 +311,16 @@ api_login() {
 }
 
 generate_uuid() {
-    # ИЗМЕНЕНО: Добавлен недостающий слэш в URL
+    # Determine the panel URL based on whether Caddy is used
+    if [[ "$USE_CADDY" == "true" ]]; then
+        PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
+    else
+        SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
+        PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
+    fi
+    
     local response=$(curl -k -s -b /tmp/xui_cookies.txt \
-        "https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}panel/api/server/getNewUUID" 2>/dev/null)
+        "${PANEL_URL}panel/api/server/getNewUUID" 2>/dev/null)
     
     local uuid=$(echo "$response" | jq -r '.obj // empty' 2>/dev/null)
     
@@ -289,9 +332,16 @@ generate_uuid() {
 }
 
 generate_reality_keys() {
-    # ИЗМЕНЕНО: Добавлен недостающий слэш в URL
+    # Determine the panel URL based on whether Caddy is used
+    if [[ "$USE_CADDY" == "true" ]]; then
+        PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
+    else
+        SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
+        PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
+    fi
+    
     local response=$(curl -k -s -b /tmp/xui_cookies.txt \
-        "https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}panel/api/server/getNewX25519Cert" 2>/dev/null)
+        "${PANEL_URL}panel/api/server/getNewX25519Cert" 2>/dev/null)
     
     REALITY_PRIVATE_KEY=$(echo "$response" | jq -r '.obj.privateKey // empty' 2>/dev/null)
     REALITY_PUBLIC_KEY=$(echo "$response" | jq -r '.obj.publicKey // empty' 2>/dev/null)
@@ -307,6 +357,12 @@ generate_reality_keys() {
 
 create_vless_reality_inbound() {
     echo -e "${yellow}→${plain} Creating VLESS Reality inbound..."
+    
+    # Predefined settings for default inbound
+    REALITY_PORT=443
+    REALITY_SNI="www.microsoft.com"
+    REALITY_DEST="www.microsoft.com:443"
+    CLIENT_EMAIL="user@3xui.com"
     
     CLIENT_UUID=$(generate_uuid)
     if [[ -z "$CLIENT_UUID" ]]; then
@@ -324,8 +380,6 @@ create_vless_reality_inbound() {
     
     SHORT_ID=$(openssl rand -hex 8)
 
-    # ИЗМЕНЕНО: Создаем вложенные JSON-объекты и преобразуем их в строки.
-    # Это необходимо, так как API ожидает, что поля settings, streamSettings и sniffing будут строками, содержащими JSON.
     settings_json=$(jq -n \
         --arg uuid "$CLIENT_UUID" \
         --arg email "$CLIENT_EMAIL" \
@@ -376,7 +430,6 @@ create_vless_reality_inbound() {
         }'
     )
 
-    # ИЗМЕНЕНО: Создаем основной JSON, используя строковые представления вложенных объектов
     local inbound_json
     inbound_json=$(jq -n \
         --argjson port "$REALITY_PORT" \
@@ -398,9 +451,16 @@ create_vless_reality_inbound() {
         }'
     )
     
-    # ИЗМЕНЕНО: Добавлен недостающий слэш в URL
+    # Determine the panel URL based on whether Caddy is used
+    if [[ "$USE_CADDY" == "true" ]]; then
+        PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
+    else
+        SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
+        PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
+    fi
+    
     local response=$(curl -k -s -b /tmp/xui_cookies.txt -X POST \
-        "https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}panel/api/inbounds/add" \
+        "${PANEL_URL}panel/api/inbounds/add" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
         -d "$inbound_json" 2>/dev/null)
@@ -478,13 +538,24 @@ configure_reality_inbound() {
 main() {
     print_banner
     read_credentials
+    ask_caddy
+    ask_default_inbound
     read_parameters
     install_base
     install_3xui
-    install_caddy
-    configure_caddy
+    
+    # Only install and configure Caddy if user chose to use it
+    if [[ "$USE_CADDY" == "true" ]]; then
+        install_caddy
+        configure_caddy
+    fi
+    
     show_summary
-    configure_reality_inbound
+    
+    # Only create default inbound if user chose to
+    if [[ "$CREATE_DEFAULT_INBOUND" == "true" ]]; then
+        configure_reality_inbound
+    fi
 }
 
 main
