@@ -235,8 +235,47 @@ api_login() {
 add_vless_reality() {
     echo -e "${yellow}→${plain} Creating VLESS Reality inbound..."
     
-    # Wait for panel to be ready
-    sleep 5
+    # Check if x-ui service is running
+    echo -e "${cyan}│${plain} Checking x-ui service status..."
+    if ! systemctl is-active --quiet x-ui; then
+        echo -e "${red}✗ x-ui service is not running${plain}"
+        echo -e "${yellow}⚠${plain}  Service status:"
+        systemctl status x-ui --no-pager -l
+        return 1
+    fi
+    echo -e "${green}✓${plain} x-ui service is running"
+    
+    # Check if port is listening
+    echo -e "${cyan}│${plain} Checking if panel port ${PANEL_PORT} is open..."
+    local port_check=0
+    for i in {1..15}; do
+        if netstat -tln 2>/dev/null | grep -q ":${PANEL_PORT}" || ss -tln 2>/dev/null | grep -q ":${PANEL_PORT}"; then
+            port_check=1
+            break
+        fi
+        echo -e "${yellow}⟳${plain} Waiting for port to open... ($i/15)"
+        sleep 2
+    done
+    
+    if [ $port_check -eq 0 ]; then
+        echo -e "${red}✗ Port ${PANEL_PORT} is not open${plain}"
+        echo -e "${yellow}⚠${plain}  Open ports:"
+        netstat -tln 2>/dev/null | grep LISTEN || ss -tln 2>/dev/null | grep LISTEN
+        return 1
+    fi
+    echo -e "${green}✓${plain} Port ${PANEL_PORT} is open"
+    
+    # Test panel connectivity
+    echo -e "${cyan}│${plain} Testing panel connectivity..."
+    local test_response=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${PANEL_PORT}${config_webBasePath}/login" --max-time 5)
+    echo -e "${cyan}│${plain}   Response code: ${test_response}"
+    
+    if [ "$test_response" == "000" ]; then
+        echo -e "${red}✗ Cannot connect to panel${plain}"
+        echo -e "${yellow}⚠${plain}  Panel logs:"
+        journalctl -u x-ui -n 20 --no-pager
+        return 1
+    fi
     
     # Login to get session
     if ! api_login; then
@@ -244,12 +283,20 @@ add_vless_reality() {
         return 1
     fi
     
+    echo -e "${cyan}│${plain} Generating keys..."
+    
     # Generate keys
     local uuid=$(cat /proc/sys/kernel/random/uuid)
+    echo -e "${cyan}│${plain}   UUID: ${uuid}"
+    
     local x25519_keys=$(/usr/local/x-ui/x-ui x25519)
     local private_key=$(echo "$x25519_keys" | grep "Private key:" | awk '{print $3}')
     local public_key=$(echo "$x25519_keys" | grep "Public key:" | awk '{print $3}')
+    echo -e "${cyan}│${plain}   Private Key: ${private_key}"
+    echo -e "${cyan}│${plain}   Public Key: ${public_key}"
+    
     local short_id=$(openssl rand -hex 8)
+    echo -e "${cyan}│${plain}   Short ID: ${short_id}"
     
     # Create inbound JSON
     local inbound_json=$(cat <<EOF
@@ -267,14 +314,23 @@ add_vless_reality() {
 EOF
 )
     
+    echo -e "${cyan}│${plain} Sending API request..."
+    echo -e "${cyan}│${plain}   Endpoint: http://127.0.0.1:${PANEL_PORT}${config_webBasePath}/panel/api/inbounds/add"
+    
     # Add inbound via API
-    local response=$(curl -s -X POST "http://127.0.0.1:${PANEL_PORT}${config_webBasePath}/panel/api/inbounds/add" \
+    local response=$(curl -s -w "\n%{http_code}" -X POST "http://127.0.0.1:${PANEL_PORT}${config_webBasePath}/panel/api/inbounds/add" \
         -H "Content-Type: application/json" \
         -b /tmp/x-ui-cookie.txt \
         -d "$inbound_json")
     
-    if echo "$response" | grep -q "success"; then
-        echo -e "${green}✓${plain} VLESS Reality inbound created"
+    local http_code=$(echo "$response" | tail -n1)
+    local body=$(echo "$response" | head -n-1)
+    
+    echo -e "${cyan}│${plain}   HTTP Code: ${http_code}"
+    echo -e "${cyan}│${plain}   Response Body: ${body}"
+    
+    if echo "$body" | grep -q "success"; then
+        echo -e "${green}✓${plain} VLESS Reality inbound created successfully"
         
         # Store config for summary
         VLESS_UUID="$uuid"
@@ -283,7 +339,30 @@ EOF
         return 0
     else
         echo -e "${red}✗ Failed to create inbound${plain}"
-        echo -e "${red}Response: $response${plain}"
+        echo -e "${red}┌ Error Details${plain}"
+        echo -e "${red}│${plain}"
+        echo -e "${red}│${plain} HTTP Status: ${http_code}"
+        echo -e "${red}│${plain} Response: ${body}"
+        echo -e "${red}│${plain}"
+        
+        # Try to parse error message if JSON
+        if echo "$body" | jq -e . >/dev/null 2>&1; then
+            local error_msg=$(echo "$body" | jq -r '.msg // .message // .error // "Unknown error"')
+            echo -e "${red}│${plain} Error Message: ${error_msg}"
+        fi
+        
+        echo -e "${red}│${plain}"
+        echo -e "${red}│${plain} Debug Info:"
+        echo -e "${red}│${plain}   Cookie file: $(cat /tmp/x-ui-cookie.txt 2>/dev/null | head -n5 || echo 'Cookie file empty/missing')"
+        echo -e "${red}│${plain}   Panel Port: ${PANEL_PORT}"
+        echo -e "${red}│${plain}   Web Base Path: ${config_webBasePath}"
+        echo -e "${red}│${plain}"
+        echo -e "${red}└${plain}"
+        
+        # Save full request for debugging
+        echo "$inbound_json" > /tmp/x-ui-inbound-request.json
+        echo -e "${yellow}⚠${plain}  Full JSON request saved to: /tmp/x-ui-inbound-request.json"
+        
         return 1
     fi
 }
