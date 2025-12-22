@@ -195,13 +195,13 @@ configure_caddy() {
     echo -e "${yellow}→${plain} Configuring reverse proxy..."
     
     cat > /etc/caddy/Caddyfile <<EOF
-$PANEL_DOMAIN:8443 {
+ $PANEL_DOMAIN:8443 {
     encode gzip
     reverse_proxy 127.0.0.1:$PANEL_PORT
     tls internal
 }
 
-$SUB_DOMAIN:8443 {
+ $SUB_DOMAIN:8443 {
     encode gzip
     reverse_proxy 127.0.0.1:$SUB_PORT
 }
@@ -247,20 +247,14 @@ show_summary() {
     
     echo -e "\n${yellow}⚠  Panel is not secure with SSL certificate${plain}"
     echo -e "${yellow}   Configure SSL in panel settings for production${plain}"
-    
-    echo -e "\n${magenta}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${plain}"
-    echo -e "${magenta}  Creating VLESS Reality Inbound...${plain}"
-    echo -e "${magenta}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${plain}\n"
-    
-    # Now configure Reality after showing installation complete
-    configure_reality_inbound
 }
 
 api_login() {
     echo -e "${yellow}→${plain} Authenticating..."
     
+    # ИЗМЕНЕНО: Заменен ${ACTUAL_PORT} на 8443 для подключения через Caddy
     local response=$(curl -k -s -c /tmp/xui_cookies.txt -X POST \
-        "https://${PANEL_DOMAIN}:${ACTUAL_PORT}/${ACTUAL_WEBBASE}/login" \
+        "https://${PANEL_DOMAIN}:8443/${ACTUAL_WEBBASE}/login" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
         -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" 2>/dev/null)
@@ -270,13 +264,15 @@ api_login() {
         return 0
     else
         echo -e "${red}✗${plain} Authentication failed"
+        echo "Response was: $response" # Добавим вывод ответа для отладки
         return 1
     fi
 }
 
 generate_uuid() {
+    # ИЗМЕНЕНО: Заменен ${ACTUAL_PORT} на 8443 для подключения через Caddy
     local response=$(curl -k -s -b /tmp/xui_cookies.txt \
-        "https://${PANEL_DOMAIN}:${ACTUAL_PORT}/${ACTUAL_WEBBASE}/panel/api/server/getNewUUID" 2>/dev/null)
+        "https://${PANEL_DOMAIN}:8443/${ACTUAL_WEBBASE}/panel/api/server/getNewUUID" 2>/dev/null)
     
     local uuid=$(echo "$response" | jq -r '.obj // empty' 2>/dev/null)
     
@@ -288,8 +284,9 @@ generate_uuid() {
 }
 
 generate_reality_keys() {
+    # ИЗМЕНЕНО: Заменен ${ACTUAL_PORT} на 8443 для подключения через Caddy
     local response=$(curl -k -s -b /tmp/xui_cookies.txt \
-        "https://${PANEL_DOMAIN}:${ACTUAL_PORT}/${ACTUAL_WEBBASE}/panel/api/server/getNewX25519Cert" 2>/dev/null)
+        "https://${PANEL_DOMAIN}:8443/${ACTUAL_WEBBASE}/panel/api/server/getNewX25519Cert" 2>/dev/null)
     
     REALITY_PRIVATE_KEY=$(echo "$response" | jq -r '.obj.privateKey // empty' 2>/dev/null)
     REALITY_PUBLIC_KEY=$(echo "$response" | jq -r '.obj.publicKey // empty' 2>/dev/null)
@@ -342,8 +339,9 @@ EOF
 )
     
     # Send API request
+    # ИЗМЕНЕНО: Заменен ${ACTUAL_PORT} на 8443 для подключения через Caddy
     local response=$(curl -k -s -b /tmp/xui_cookies.txt -X POST \
-        "https://${PANEL_DOMAIN}:${ACTUAL_PORT}/${ACTUAL_WEBBASE}/panel/api/inbounds/add" \
+        "https://${PANEL_DOMAIN}:8443/${ACTUAL_WEBBASE}/panel/api/inbounds/add" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
         -d "$inbound_json" 2>/dev/null)
@@ -395,23 +393,27 @@ EOF
         return 0
     else
         echo -e "${red}✗${plain} Failed to create inbound"
+        echo "Response was: $response" # Добавим вывод ответа для отладки
         return 1
     fi
 }
 
 configure_reality_inbound() {
-    
-        if api_login; then
-            if create_vless_reality_inbound; then
-                echo -e "\n${green}✓ VLESS Reality inbound configured successfully!${plain}\n"
-            else
-                echo -e "\n${yellow}⚠ Failed to create inbound automatically${plain}"
-                echo -e "${yellow}  Please create it manually in the panel${plain}\n"
-            fi
+    echo -e "\n${magenta}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${plain}"
+    echo -e "${magenta}  Creating VLESS Reality Inbound...${plain}"
+    echo -e "${magenta}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${plain}\n"
+
+    if api_login; then
+        if create_vless_reality_inbound; then
+            echo -e "\n${green}✓ VLESS Reality inbound configured successfully!${plain}\n"
         else
-            echo -e "\n${yellow}⚠ API authentication failed${plain}"
-            echo -e "${yellow}  Please create inbound manually in the panel${plain}\n"
+            echo -e "\n${yellow}⚠ Failed to create inbound automatically${plain}"
+            echo -e "${yellow}  Please create it manually in the panel${plain}\n"
         fi
+    else
+        echo -e "\n${yellow}⚠ API authentication failed${plain}"
+        echo -e "${yellow}  Please create inbound manually in the panel${plain}\n"
+    fi
 }
 
 # --- Main execution ---
@@ -424,6 +426,8 @@ main() {
     install_caddy
     configure_caddy
     show_summary
+    # ИЗМЕНЕНО: Вызов функции вынесен сюда для лучшей читаемости
+    configure_reality_inbound
 }
 
 main
