@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.12
+#UPDATE 2.123
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -342,7 +342,7 @@ generate_reality_keys() {
     fi
     
     local response=$(curl -k -s -b /tmp/xui_cookies.txt \
-        "${PANEL_URL}panel/api/server/getNewmlkem768" 2>/dev/null)
+        "${PANEL_URL}panel/api/server/getNewX25519Cert" 2>/dev/null)
     
     REALITY_PRIVATE_KEY=$(echo "$response" | jq -r '.obj.privateKey // empty' 2>/dev/null)
     REALITY_PUBLIC_KEY=$(echo "$response" | jq -r '.obj.publicKey // empty' 2>/dev/null)
@@ -398,6 +398,7 @@ create_vless_reality_inbound() {
         --arg dest "$REALITY_DEST" \
         --arg sni "$REALITY_SNI" \
         --arg privkey "$REALITY_PRIVATE_KEY" \
+        --arg pubkey "$REALITY_PUBLIC_KEY" \
         --arg shortid "$SHORT_ID" \
         --arg remark "VLESS-Reality-Vision" \
         '{
@@ -421,6 +422,7 @@ create_vless_reality_inbound() {
                         xver: 0,
                         serverNames: [$sni],
                         privateKey: $privkey,
+                        publicKey: $pubkey,
                         minClientVer: "",
                         maxClientVer: "",
                         maxTimeDiff: 0,
