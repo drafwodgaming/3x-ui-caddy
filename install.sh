@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.12
+#UPDATE 2.1
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -241,12 +241,19 @@ EOF
 
 
 # --- Show summary ---
+# --- Show summary ---
 show_summary() {
     sleep 2
     PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>/dev/null)
-    ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
-    ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+')
-    SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
+    ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+' | tr -d '[:space:]')
+    ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+' | tr -d '[:space:]')
+    # Ensure webBasePath starts with / if it's not empty
+    if [[ -n "$ACTUAL_WEBBASE" && ! "$ACTUAL_WEBBASE" =~ ^/ ]]; then
+        ACTUAL_WEBBASE="/$ACTUAL_WEBBASE"
+    fi
+    # Remove trailing slash from webBasePath to avoid double slashes
+    ACTUAL_WEBBASE=$(echo "$ACTUAL_WEBBASE" | sed 's:/*$::')
+    SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org | tr -d '[:space:]')
     
     clear
     echo -e "${green}"
@@ -268,10 +275,13 @@ show_summary() {
     echo -e "${cyan}│${plain}"
     
     if [[ "$USE_CADDY" == "true" ]]; then
-        echo -e "${cyan}│${plain}  Panel (HTTPS)    ${blue}https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}${plain}"
-        echo -e "${cyan}│${plain}  Subscription     ${blue}https://${SUB_DOMAIN}:8443/${plain}"
+        PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
+        SUB_URL="https://${SUB_DOMAIN}:8443/"
+        echo -e "${cyan}│${plain}  Panel (HTTPS)    ${blue}${PANEL_URL}${plain}"
+        echo -e "${cyan}│${plain}  Subscription     ${blue}${SUB_URL}${plain}"
     else
-        echo -e "${cyan}│${plain}  Panel (Direct)   ${blue}http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}${plain}"
+        PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
+        echo -e "${cyan}│${plain}  Panel (Direct)   ${blue}${PANEL_URL}${plain}"
     fi
     
     echo -e "${cyan}│${plain}"
@@ -286,6 +296,7 @@ show_summary() {
 api_login() {
     echo -e "${yellow}→${plain} Authenticating..."
     
+    # Determine the panel URL based on whether Caddy is used
     if [[ "$USE_CADDY" == "true" ]]; then
         PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
     else
