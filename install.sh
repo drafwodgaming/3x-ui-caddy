@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.122
+#UPDATE 2.13
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -358,7 +358,7 @@ generate_reality_keys() {
 create_vless_reality_inbound() {
     echo -e "${yellow}→${plain} Creating VLESS Reality inbound..."
     
-    # Predefined settings for default inbound
+    # Предустановленные настройки для инбаунда
     REALITY_PORT=443
     REALITY_SNI="www.microsoft.com"
     REALITY_DEST="www.microsoft.com:443"
@@ -369,7 +369,14 @@ create_vless_reality_inbound() {
         echo -e "${red}✗${plain} Failed to generate UUID"
         return 1
     fi
-    echo -e "${cyan}│${plain} UUID generated"
+
+    # Базовая проверка формата UUID
+    if [[ ! "$CLIENT_UUID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+        echo -e "${red}✗${plain} Generated UUID has invalid format: $CLIENT_UUID"
+        return 1
+    fi
+    
+    echo -e "${cyan}│${plain} UUID generated: $CLIENT_UUID"
     
     generate_reality_keys
     if [[ -z "$REALITY_PRIVATE_KEY" || -z "$REALITY_PUBLIC_KEY" ]]; then
@@ -380,78 +387,67 @@ create_vless_reality_inbound() {
     
     SHORT_ID=$(openssl rand -hex 8)
 
-    settings_json=$(jq -n \
+    # --- Создание JSON-полезной нагрузки одним махом с помощью jq ---
+    # Фильтр @json гарантирует корректное преобразование объекта в строку
+    local inbound_json
+    inbound_json=$(jq -n \
+        --argjson port "$REALITY_PORT" \
         --arg uuid "$CLIENT_UUID" \
         --arg email "$CLIENT_EMAIL" \
-        '{
-            clients: [{ id: $uuid, flow: "xtls-rprx-vision", email: $email, limitIp: 0, totalGB: 0, expiryTime: 0, enable: true, tgId: "", subId: "" }],
-            decryption: "none",
-            fallbacks: []
-        }'
-    )
-
-    streamSettings_json=$(jq -n \
         --arg dest "$REALITY_DEST" \
         --arg sni "$REALITY_SNI" \
         --arg privkey "$REALITY_PRIVATE_KEY" \
         --arg shortid "$SHORT_ID" \
-        '{
-            network: "tcp",
-            security: "reality",
-            realitySettings: {
-                show: false,
-                dest: $dest,
-                xver: 0,
-                serverNames: [$sni],
-                privateKey: $privkey,
-                minClientVer: "",
-                maxClientVer: "",
-                maxTimeDiff: 0,
-                shortIds: [$shortid]
-            },
-            tcpSettings: { acceptProxyProtocol: false, header: { type: "none" } }
-        }'
-    )
-
-    sniffing_json=$(jq -n \
-        '{
-            enabled: true,
-            destOverride: ["http", "tls", "quic", "fakedns"],
-            metadataOnly: false,
-            routeOnly: false
-        }'
-    )
-    
-    allocate_json=$(jq -n \
-        '{
-            strategy: "always",
-            refresh: 5,
-            concurrency: 3
-        }'
-    )
-
-    local inbound_json
-    inbound_json=$(jq -n \
-        --argjson port "$REALITY_PORT" \
-        --arg settings_str "$settings_json" \
-        --arg streamSettings_str "$streamSettings_json" \
-        --arg sniffing_str "$sniffing_json" \
-        --arg allocate_str "$allocate_json" \
         --arg remark "VLESS-Reality-Vision" \
         '{
             enable: true,
             port: $port,
             protocol: "vless",
-            settings: $settings_str,
-            streamSettings: $streamSettings_str,
-            sniffing: $sniffing_str,
+            settings: (
+                {
+                    clients: [{ id: $uuid, flow: "xtls-rprx-vision", email: $email, limitIp: 0, totalGB: 0, expiryTime: 0, enable: true, tgId: "", subId: "" }],
+                    decryption: "none",
+                    fallbacks: []
+                } | @json
+            ),
+            streamSettings: (
+                {
+                    network: "tcp",
+                    security: "reality",
+                    realitySettings: {
+                        show: false,
+                        dest: $dest,
+                        xver: 0,
+                        serverNames: [$sni],
+                        privateKey: $privkey,
+                        minClientVer: "",
+                        maxClientVer: "",
+                        maxTimeDiff: 0,
+                        shortIds: [$shortid]
+                    },
+                    tcpSettings: { acceptProxyProtocol: false, header: { type: "none" } }
+                } | @json
+            ),
+            sniffing: (
+                {
+                    enabled: true,
+                    destOverride: ["http", "tls", "quic", "fakedns"],
+                    metadataOnly: false,
+                    routeOnly: false
+                } | @json
+            ),
             remark: $remark,
             listen: "",
-            allocate: $allocate_str
+            allocate: { strategy: "always", refresh: 5, concurrency: 3 }
         }'
     )
+
+    # --- Отладочная информация ---
+    echo -e "${yellow}→${plain} Payload to be sent to API:"
+    echo "$inbound_json" | jq .
+    echo -e "${blue}└${plain}"
     
-    # Determine the panel URL based on whether Caddy is used
+    # Определение URL панели
     if [[ "$USE_CADDY" == "true" ]]; then
         PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
     else
@@ -464,6 +460,10 @@ create_vless_reality_inbound() {
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
         -d "$inbound_json" 2>/dev/null)
+
+    echo -e "${yellow}→${plain} API Response:"
+    echo "$response" | jq .
+    echo -e "${blue}└${plain}"
     
     if echo "$response" | jq -e '.success == true' >/dev/null 2>&1; then
         echo -e "${green}✓${plain} VLESS Reality inbound created"
