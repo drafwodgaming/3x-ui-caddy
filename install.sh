@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.1
+#UPDATE 2.12
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -121,28 +121,42 @@ ask_default_inbound() {
 }
 
 # --- Install base dependencies ---
+# --- Install base dependencies including Postman ---
 install_base() {
     echo -e "\n${yellow}→${plain} Installing dependencies..."
     case "${release}" in
         ubuntu | debian | armbian)
-            apt-get update >/dev/null 2>&1 && apt-get install -y -q wget curl tar tzdata sqlite3 jq >/dev/null 2>&1
+            apt-get update >/dev/null 2>&1
+            apt-get install -y -q wget curl tar tzdata sqlite3 jq snapd >/dev/null 2>&1
         ;;
         fedora | amzn | virtuozzo | rhel | almalinux | rocky | ol)
-            dnf -y update >/dev/null 2>&1 && dnf install -y -q wget curl tar tzdata sqlite jq >/dev/null 2>&1
+            dnf -y update >/dev/null 2>&1
+            dnf install -y -q wget curl tar tzdata sqlite jq snapd >/dev/null 2>&1
         ;;
         centos)
             if [[ "${VERSION_ID}" =~ ^7 ]]; then
-                yum -y update >/dev/null 2>&1 && yum install -y wget curl tar tzdata sqlite jq >/dev/null 2>&1
+                yum -y update >/dev/null 2>&1
+                yum install -y wget curl tar tzdata sqlite jq epel-release >/dev/null 2>&1
+                yum install -y snapd >/dev/null 2>&1
             else
-                dnf -y update >/dev/null 2>&1 && dnf install -y -q wget curl tar tzdata sqlite jq >/dev/null 2>&1
+                dnf -y update >/dev/null 2>&1
+                dnf install -y -q wget curl tar tzdata sqlite jq snapd >/dev/null 2>&1
             fi
         ;;
         *)
-            apt-get update >/dev/null 2>&1 && apt-get install -y -q wget curl tar tzdata sqlite3 jq >/dev/null 2>&1
+            apt-get update >/dev/null 2>&1
+            apt-get install -y -q wget curl tar tzdata sqlite3 jq snapd >/dev/null 2>&1
         ;;
     esac
-    echo -e "${green}✓${plain} Dependencies installed"
+
+    # --- Enable Snap and install Postman ---
+    echo -e "\n${yellow}→${plain} Enabling Snap and installing Postman..."
+    systemctl enable --now snapd.socket
+    ln -s /var/lib/snapd/snap /snap 2>/dev/null || true
+    snap install postman >/dev/null 2>&1
+    echo -e "${green}✓${plain} Dependencies and Postman installed"
 }
+
 
 # --- Install 3X-UI ---
 install_3xui() {
