@@ -324,23 +324,61 @@ create_vless_reality_inbound() {
     
     # Create inbound JSON
    # Создание inbound_json
-local inbound_json=$(cat <<EOF
-{
-  "enable": true,
-  "port": ${REALITY_PORT},
-  "protocol": "vless",
-  "settings": "{\"clients\":[{\"id\":\"${CLIENT_UUID}\",\"flow\":\"xtls-rprx-vision\",\"email\":\"${CLIENT_EMAIL}\",\"limitIp\":0,\"totalGB\":0,\"expiryTime\":0,\"enable\":true,\"tgId\":\"\",\"subId\":\"\"}],\"decryption\":\"none\",\"fallbacks\":[]}",
-  "streamSettings": "{\"network\":\"tcp\",\"security\":\"reality\",\"realitySettings\":{\"show\":false,\"dest\":\"${REALITY_DEST}\",\"xver\":0,\"serverNames\":[\"${REALITY_SNI}\"],\"privateKey\":\"${REALITY_PRIVATE_KEY}\",\"minClientVer\":\"\",\"maxClientVer\":\"\",\"maxTimeDiff\":0,\"shortIds\":[\"${SHORT_ID}\"]},\"tcpSettings\":{\"acceptProxyProtocol\":false,\"header\":{\"type\":\"none\"}}}",
-  "sniffing": "{\"enabled\":true,\"destOverride\":[\"http\",\"tls\",\"quic\",\"fakedns\"],\"metadataOnly\":false,\"routeOnly\":false}",
-  "remark": "VLESS-Reality-Vision",
-  "listen": "",
-  "allocate": "{\"strategy\":\"always\",\"refresh\":5,\"concurrency\":3}"
-}
-EOF
+inbound_json=$(jq -n \
+  --arg port "$REALITY_PORT" \
+  --arg uuid "$CLIENT_UUID" \
+  --arg email "$CLIENT_EMAIL" \
+  --arg dest "$REALITY_DEST" \
+  --arg sni "$REALITY_SNI" \
+  --arg privkey "$REALITY_PRIVATE_KEY" \
+  --arg shortid "$SHORT_ID" \
+  '{
+    enable: true,
+    port: ($port|tonumber),
+    protocol: "vless",
+    settings: {
+      clients: [
+        {
+          id: $uuid,
+          flow: "xtls-rprx-vision",
+          email: $email,
+          limitIp: 0,
+          totalGB: 0,
+          expiryTime: 0,
+          enable: true,
+          tgId: "",
+          subId: ""
+        }
+      ],
+      decryption: "none",
+      fallbacks: []
+    },
+    streamSettings: {
+      network: "tcp",
+      security: "reality",
+      realitySettings: {
+        show: false,
+        dest: $dest,
+        xver: 0,
+        serverNames: [$sni],
+        privateKey: $privkey,
+        minClientVer: "",
+        maxClientVer: "",
+        maxTimeDiff: 0,
+        shortIds: [$shortid]
+      },
+      tcpSettings: {
+        acceptProxyProtocol: false,
+        header: { type: "none" }
+      }
+    },
+    sniffing: { enabled: true, destOverride: ["http","tls","quic","fakedns"], metadataOnly: false, routeOnly: false },
+    remark: "VLESS-Reality-Vision",
+    listen: "",
+    allocate: { strategy: "always", refresh: 5, concurrency: 3 }
+  }'
 )
 
-# Сжимаем JSON в одну строку
-inbound_json=$(echo "$inbound_json" | tr -d '\n')
 
     
     # Send API request
