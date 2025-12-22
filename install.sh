@@ -342,8 +342,8 @@ EOF
 )
     
     # Send API request
-    local response=$(curl -s -b /tmp/xui_cookies.txt -X POST \
-        "http://${PANEL_DOMAIN}:${ACTUAL_PORT}/${ACTUAL_WEBBASE}/panel/api/inbounds/add" \
+    local response=$(curl -k -s -b /tmp/xui_cookies.txt -X POST \
+        "https://${PANEL_DOMAIN}:${ACTUAL_PORT}/${ACTUAL_WEBBASE}/panel/api/inbounds/add" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
         -d "$inbound_json" 2>/dev/null)
