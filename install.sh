@@ -265,7 +265,7 @@ wait_for_panel() {
     while [ $attempt -lt $max_attempts ]; do
         if systemctl is-active --quiet x-ui; then
             local http_code=$(curl -s -o /dev/null -w "%{http_code}" \
-                "http://127.0.0.1:${ACTUAL_PORT}${ACTUAL_WEBBASE}/login" 2>/dev/null)
+                "http://127.0.0.1:${ACTUAL_PORT}/login" 2>/dev/null)
             
             if [[ "$http_code" =~ ^(200|302|401|405)$ ]]; then
                 echo -e "${green}✓${plain} Panel API ready"
@@ -289,7 +289,7 @@ api_login() {
     echo -e "${yellow}→${plain} Authenticating..."
     
     local response=$(curl -s -c /tmp/xui_cookies.txt -X POST \
-        "http://127.0.0.1:${ACTUAL_PORT}${ACTUAL_WEBBASE}/login" \
+        "http://127.0.0.1:${ACTUAL_PORT}/login" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
         -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" 2>/dev/null)
