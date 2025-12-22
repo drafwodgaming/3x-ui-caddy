@@ -169,9 +169,11 @@ install_3xui() {
     systemctl enable x-ui >/dev/null 2>&1
     systemctl start x-ui
     
-    /usr/local/x-ui/x-ui migrate >/dev/null 2>&1
-    
     echo -e "${green}✓${plain} 3x-ui ${tag_version} installed"
+    echo -e "${cyan}→${plain} Waiting for panel to initialize..."
+    sleep 5
+    
+    /usr/local/x-ui/x-ui migrate >/dev/null 2>&1
 }
 
 # --- Install Caddy ---
@@ -213,21 +215,23 @@ EOF
 
 # --- API Functions ---
 wait_for_panel() {
-    echo -e "${yellow}→${plain} Waiting for panel to start..."
-    local max_attempts=30
+    echo -e "${yellow}→${plain} Checking panel status..."
+    local max_attempts=15
     local attempt=0
     
     while [ $attempt -lt $max_attempts ]; do
-        if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${PANEL_PORT}${config_webBasePath}/login" | grep -q "200\|302\|401"; then
-            echo -e "${green}✓${plain} Panel is ready"
-            sleep 2
-            return 0
+        if systemctl is-active --quiet x-ui; then
+            local http_code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${PANEL_PORT}${config_webBasePath}/login" 2>/dev/null)
+            if [[ "$http_code" =~ ^(200|302|401)$ ]]; then
+                echo -e "${green}✓${plain} Panel is ready"
+                return 0
+            fi
         fi
         attempt=$((attempt + 1))
-        sleep 2
+        sleep 1
     done
     
-    echo -e "${red}✗${plain} Panel failed to start"
+    echo -e "${red}✗${plain} Panel not responding"
     return 1
 }
 
@@ -237,30 +241,46 @@ api_login() {
     local response=$(curl -s -c /tmp/xui_cookies.txt -X POST \
         "http://127.0.0.1:${PANEL_PORT}${config_webBasePath}/login" \
         -H "Content-Type: application/json" \
-        -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}")
+        -H "Accept: application/json" \
+        -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" 2>/dev/null)
     
-    if echo "$response" | grep -q '"success":true'; then
+    if echo "$response" | jq -e '.success == true' >/dev/null 2>&1; then
         echo -e "${green}✓${plain} API authentication successful"
         return 0
     else
         echo -e "${red}✗${plain} API authentication failed"
-        echo "$response"
+        echo -e "${yellow}Response:${plain} $response"
         return 1
     fi
 }
 
 generate_uuid() {
-    curl -s -b /tmp/xui_cookies.txt \
-        "http://127.0.0.1:${PANEL_PORT}${config_webBasePath}/panel/api/server/getNewUUID" \
-        | jq -r '.obj // empty'
+    local response=$(curl -s -b /tmp/xui_cookies.txt \
+        "http://127.0.0.1:${PANEL_PORT}${config_webBasePath}/panel/api/server/getNewUUID" 2>/dev/null)
+    
+    local uuid=$(echo "$response" | jq -r '.obj // empty' 2>/dev/null)
+    
+    if [[ -n "$uuid" && "$uuid" != "null" ]]; then
+        echo "$uuid"
+    else
+        echo ""
+    fi
 }
 
 generate_reality_keys() {
     local response=$(curl -s -b /tmp/xui_cookies.txt \
-        "http://127.0.0.1:${PANEL_PORT}${config_webBasePath}/panel/api/server/getNewX25519Cert")
+        "http://127.0.0.1:${PANEL_PORT}${config_webBasePath}/panel/api/server/getNewX25519Cert" 2>/dev/null)
     
-    REALITY_PRIVATE_KEY=$(echo "$response" | jq -r '.obj.privateKey // empty')
-    REALITY_PUBLIC_KEY=$(echo "$response" | jq -r '.obj.publicKey // empty')
+    REALITY_PRIVATE_KEY=$(echo "$response" | jq -r '.obj.privateKey // empty' 2>/dev/null)
+    REALITY_PUBLIC_KEY=$(echo "$response" | jq -r '.obj.publicKey // empty' 2>/dev/null)
+    
+    if [[ -z "$REALITY_PRIVATE_KEY" || "$REALITY_PRIVATE_KEY" == "null" ]]; then
+        REALITY_PRIVATE_KEY=""
+    fi
+    
+    if [[ -z "$REALITY_PUBLIC_KEY" || "$REALITY_PUBLIC_KEY" == "null" ]]; then
+        REALITY_PUBLIC_KEY=""
+    fi
 }
 
 create_vless_reality_inbound() {
@@ -280,10 +300,12 @@ create_vless_reality_inbound() {
         echo -e "${red}✗${plain} Failed to generate Reality keys"
         return 1
     fi
-    echo -e "${cyan}│${plain} Reality keys generated"
+    echo -e "${cyan}│${plain} Private Key: ${green}${REALITY_PRIVATE_KEY:0:20}...${plain}"
+    echo -e "${cyan}│${plain} Public Key: ${green}${REALITY_PUBLIC_KEY:0:20}...${plain}"
     
     # Generate short ID
     SHORT_ID=$(openssl rand -hex 8)
+    echo -e "${cyan}│${plain} Short ID: ${green}${SHORT_ID}${plain}"
     
     # Create inbound JSON
     local inbound_json=$(cat <<EOF
@@ -305,9 +327,10 @@ EOF
     local response=$(curl -s -b /tmp/xui_cookies.txt -X POST \
         "http://127.0.0.1:${PANEL_PORT}${config_webBasePath}/panel/api/inbounds/add" \
         -H "Content-Type: application/json" \
-        -d "$inbound_json")
+        -H "Accept: application/json" \
+        -d "$inbound_json" 2>/dev/null)
     
-    if echo "$response" | grep -q '"success":true'; then
+    if echo "$response" | jq -e '.success == true' >/dev/null 2>&1; then
         echo -e "${green}✓${plain} VLESS Reality inbound created successfully"
         
         # Save config to file
@@ -340,14 +363,14 @@ EOF
         return 0
     else
         echo -e "${red}✗${plain} Failed to create inbound"
-        echo "$response"
+        echo -e "${yellow}Response:${plain} $response"
         return 1
     fi
 }
 
 # --- Show summary ---
 show_summary() {
-    sleep 2
+    sleep 1
     PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>/dev/null)
     ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
     ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+')
@@ -378,19 +401,24 @@ show_summary() {
     echo -e "${cyan}│${plain}"
     echo -e "${cyan}└${plain}"
     
-    echo -e "\n${cyan}┌ VLESS Reality Configuration${plain}"
-    echo -e "${cyan}│${plain}"
-    echo -e "${cyan}│${plain}  Server IP        ${green}${SERVER_IP}${plain}"
-    echo -e "${cyan}│${plain}  Port             ${green}${REALITY_PORT}${plain}"
-    echo -e "${cyan}│${plain}  UUID             ${green}${CLIENT_UUID}${plain}"
-    echo -e "${cyan}│${plain}  Flow             ${green}xtls-rprx-vision${plain}"
-    echo -e "${cyan}│${plain}  Public Key       ${green}${REALITY_PUBLIC_KEY}${plain}"
-    echo -e "${cyan}│${plain}  Short ID         ${green}${SHORT_ID}${plain}"
-    echo -e "${cyan}│${plain}  SNI              ${green}${REALITY_SNI}${plain}"
-    echo -e "${cyan}│${plain}"
-    echo -e "${cyan}│${plain}  Config saved: ${yellow}/root/vless_reality_config.txt${plain}"
-    echo -e "${cyan}│${plain}"
-    echo -e "${cyan}└${plain}"
+    if [[ -n "$CLIENT_UUID" && -n "$REALITY_PUBLIC_KEY" && -n "$SHORT_ID" ]]; then
+        echo -e "\n${cyan}┌ VLESS Reality Configuration${plain}"
+        echo -e "${cyan}│${plain}"
+        echo -e "${cyan}│${plain}  Server IP        ${green}${SERVER_IP}${plain}"
+        echo -e "${cyan}│${plain}  Port             ${green}${REALITY_PORT}${plain}"
+        echo -e "${cyan}│${plain}  UUID             ${green}${CLIENT_UUID}${plain}"
+        echo -e "${cyan}│${plain}  Flow             ${green}xtls-rprx-vision${plain}"
+        echo -e "${cyan}│${plain}  Public Key       ${green}${REALITY_PUBLIC_KEY}${plain}"
+        echo -e "${cyan}│${plain}  Short ID         ${green}${SHORT_ID}${plain}"
+        echo -e "${cyan}│${plain}  SNI              ${green}${REALITY_SNI}${plain}"
+        echo -e "${cyan}│${plain}"
+        echo -e "${cyan}│${plain}  Config saved: ${yellow}/root/vless_reality_config.txt${plain}"
+        echo -e "${cyan}│${plain}"
+        echo -e "${cyan}└${plain}"
+    else
+        echo -e "\n${yellow}⚠  VLESS Reality inbound creation failed${plain}"
+        echo -e "${yellow}   You can create it manually in the panel${plain}"
+    fi
     
     echo -e "\n${yellow}⚠  Panel is not secure with SSL certificate${plain}"
     echo -e "${yellow}   Configure SSL in panel settings for production${plain}"
@@ -411,7 +439,7 @@ main() {
     # Wait for panel and configure Reality
     if wait_for_panel; then
         if api_login; then
-            create_vless_reality_inbound
+            create_vless_reality_inbound || echo -e "${yellow}⚠${plain} Continuing anyway..."
         fi
     fi
     
