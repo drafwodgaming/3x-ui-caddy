@@ -1,581 +1,262 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.12
-red='\033[0;31m'
-green='\033[0;32m'
-blue='\033[0;34m'
-yellow='\033[0;33m'
-cyan='\033[0;36m'
-magenta='\033[0;35m'
-plain='\033[0m'
 
-# Check raoot
-[[ $EUID -ne 0 ]] && echo -e "${red}✗ Error:${plain} Root privileges required" && exit 1
+# Colors 2
+r='\033[0;31m' g='\033[0;32m' b='\033[0;34m' y='\033[0;33m' 
+c='\033[0;36m' m='\033[0;35m' p='\033[0m'
 
-# Check OS
-if [[ -f /etc/os-release ]]; then
-    source /etc/os-release
-    release=$ID
-elif [[ -f /usr/lib/os-release ]]; then
-    source /usr/lib/oas-release
-    release=$ID
-else
-    echo -e "${red}✗ Failed to detect OS${plain}"
-    exit 1
-fi
+# Check root
+[[ $EUID -ne 0 ]] && echo -e "${r}✗ Root required${p}" && exit 1
 
+# Detect OS
+source /etc/os-release 2>/dev/null || source /usr/lib/os-release 2>/dev/null || { echo -e "${r}✗ OS detection failed${p}"; exit 1; }
+
+# Detect architecture
 arch() {
     case "$(uname -m)" in
-        x86_64 | x64 | amd64) echo 'amd64' ;;
-        i*86 | x86) echo '386' ;;
-        armv8* | armv8 | arm64 | aarch64) echo 'arm64' ;;
-        armv7* | armv7 | arm) echo 'armv7' ;;
-        armv6* | armv6) echo 'armv6' ;;
-        armv5* | armv5) echo 'armv5' ;;
+        x86_64|x64|amd64) echo 'amd64' ;;
+        i*86|x86) echo '386' ;;
+        armv8*|arm64|aarch64) echo 'arm64' ;;
+        armv7*|armv7|arm) echo 'armv7' ;;
+        armv6*) echo 'armv6' ;;
+        armv5*) echo 'armv5' ;;
         s390x) echo 's390x' ;;
-        *) echo -e "${red}✗ Unsupported architecture${plain}" && exit 1 ;;
+        *) echo -e "${r}✗ Unsupported arch${p}" && exit 1 ;;
     esac
 }
 
 print_banner() {
     clear
-    echo -e "${cyan}"
-    echo "  ╭─────────────────────────────────────────╮"
-    echo "  │                                         │"
-    echo "  │        3X-UI + CADDY INSTALLER          │"
-    echo "  │                                         │"
-    echo "  ╰─────────────────────────────────────────╯"
-    echo -e "${plain}"
+    echo -e "${c}
+  ╭─────────────────────────────────────────╮
+  │      3X-UI + CADDY INSTALLER v2.12     │
+  ╰─────────────────────────────────────────╯${p}\n"
 }
 
-# --- Credentials input ---
-read_credentials() {
-    echo -e "${blue}┌ Panel Credentials${plain}"
-    read -rp "$(echo -e ${blue}│${plain}) Username (leave empty to generate): " XUI_USERNAME
-    read -rp "$(echo -e ${blue}│${plain}) Password (leave empty to generate): " XUI_PASSWORD
+# Get user input
+get_input() {
+    echo -e "${b}┌ Panel Credentials${p}"
+    read -rp "$(echo -e ${b}│${p}) Username [auto]: " XUI_USERNAME
+    read -rp "$(echo -e ${b}│${p}) Password [auto]: " XUI_PASSWORD
+    XUI_USERNAME=${XUI_USERNAME:-$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 10)}
+    XUI_PASSWORD=${XUI_PASSWORD:-$(tr -dc 'a-zA-Z0-9!@#$%^&*()_+-=' </dev/urandom | head -c $((20 + RANDOM % 11)))}
+    echo -e "${c}│ User: ${g}$XUI_USERNAME ${c}Pass: ${g}$XUI_PASSWORD${p}"
+    echo -e "${b}└${p}\n"
 
-    if [[ -z "$XUI_USERNAME" ]]; then
-        XUI_USERNAME=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 10 | head -n 1)
-    fi
-    if [[ -z "$XUI_PASSWORD" ]]; then
-        length=$((20 + RANDOM % 11))
-        XUI_PASSWORD=$(LC_ALL=C tr -dc 'a-zA-Z0-9!@#$%^&*()_+-=' </dev/urandom | fold -w $length | head -n 1)
-    fi
-    echo -e "${cyan}│ Username:${green} $XUI_USERNAME ${cyan}Password:${green} $XUI_PASSWORD${plain}"
-    echo -e "${blue}└${plain}"
-}
+    echo -e "${b}┌ Caddy Setup${p}"
+    read -rp "$(echo -e ${b}│${p}) Use Caddy reverse proxy? [y/n]: " USE_CADDY
+    USE_CADDY=$([[ "$USE_CADDY" =~ ^[Yy]$ ]] && echo "true" || echo "false")
+    echo -e "${b}└${p}\n"
 
-# --- Panel ports/domains ---
-read_parameters() {
-    echo -e "${blue}┌ Configuration${plain}"
-    echo -e "${blue}│${plain}"
-    read -rp "$(echo -e ${blue}│${plain}) Panel port [8080]: " PANEL_PORT
+    echo -e "${b}┌ Configuration${p}"
+    read -rp "$(echo -e ${b}│${p}) Panel port [8080]: " PANEL_PORT
+    read -rp "$(echo -e ${b}│${p}) Subscription port [2096]: " SUB_PORT
     PANEL_PORT=${PANEL_PORT:-8080}
-    
-    read -rp "$(echo -e ${blue}│${plain}) Subscription port [2096]: " SUB_PORT
     SUB_PORT=${SUB_PORT:-2096}
     
-    # Only ask for domains if using Caddy
     if [[ "$USE_CADDY" == "true" ]]; then
-        read -rp "$(echo -e ${blue}│${plain}) Panel domain: " PANEL_DOMAIN
-        read -rp "$(echo -e ${blue}│${plain}) Subscription domain: " SUB_DOMAIN
+        read -rp "$(echo -e ${b}│${p}) Panel domain: " PANEL_DOMAIN
+        read -rp "$(echo -e ${b}│${p}) Subscription domain: " SUB_DOMAIN
     fi
-    echo -e "${blue}│${plain}"
-    echo -e "${blue}└${plain}"
+    echo -e "${b}└${p}\n"
+
+    echo -e "${b}┌ Default Inbound${p}"
+    read -rp "$(echo -e ${b}│${p}) Create VLESS Reality inbound? [y/n]: " CREATE_INBOUND
+    CREATE_INBOUND=$([[ "$CREATE_INBOUND" =~ ^[Yy]$ ]] && echo "true" || echo "false")
+    echo -e "${b}└${p}\n"
 }
 
-# --- Ask if user wants to use Caddy ---
-ask_caddy() {
-    echo -e "${blue}┌ Caddy Configuration${plain}"
-    echo -e "${blue}│${plain}"
-    echo -e "${blue}│${plain} Do you want to use Caddy as a reverse proxy?"
-    echo -e "${blue}│${plain} This will allow you to use domains and SSL certificates."
-    echo -e "${blue}│${plain}"
-    while true; do
-        read -rp "$(echo -e ${blue}│${plain}) Use Caddy? [y/n]: " yn
-        case $yn in
-            [Yy]* ) USE_CADDY="true"; break;;
-            [Nn]* ) USE_CADDY="false"; break;;
-            * ) echo -e "${blue}│${plain} Please answer y or n.";;
-        esac
-    done
-    echo -e "${blue}└${plain}"
-}
-
-# --- Ask if user wants to create default inbound ---
-ask_default_inbound() {
-    echo -e "${blue}┌ Default Inbound${plain}"
-    echo -e "${blue}│${plain}"
-    echo -e "${blue}│${plain} Do you want to create a default VLESS Reality inbound?"
-    echo -e "${blue}│${plain} This will create an inbound with predefined settings."
-    echo -e "${blue}│${plain}"
-    while true; do
-        read -rp "$(echo -e ${blue}│${plain}) Create default inbound? [y/n]: " yn
-        case $yn in
-            [Yy]* ) CREATE_DEFAULT_INBOUND="true"; break;;
-            [Nn]* ) CREATE_DEFAULT_INBOUND="false"; break;;
-            * ) echo -e "${blue}│${plain} Please answer y or n.";;
-        esac
-    done
-    echo -e "${blue}└${plain}"
-}
-
-# --- Install base dependencies ---
-install_base() {
-    echo -e "\n${yellow}→${plain} Installing dependencies..."
-    case "${release}" in
-        ubuntu | debian | armbian)
-            apt-get update >/dev/null 2>&1 && apt-get install -y -q wget curl tar tzdata sqlite3 jq >/dev/null 2>&1
-        ;;
-        fedora | amzn | virtuozzo | rhel | almalinux | rocky | ol)
-            dnf -y update >/dev/null 2>&1 && dnf install -y -q wget curl tar tzdata sqlite jq >/dev/null 2>&1
-        ;;
+# Install dependencies
+install_deps() {
+    echo -e "${y}→${p} Installing dependencies..."
+    case "$ID" in
+        ubuntu|debian|armbian)
+            apt-get update -qq && apt-get install -y -qq wget curl tar tzdata sqlite3 jq 2>&1 | grep -v "^[WE]:" ;;
+        fedora|amzn|rhel|almalinux|rocky|ol)
+            dnf -y -q update && dnf install -y -q wget curl tar tzdata sqlite jq ;;
         centos)
-            if [[ "${VERSION_ID}" =~ ^7 ]]; then
-                yum -y update >/dev/null 2>&1 && yum install -y wget curl tar tzdata sqlite jq >/dev/null 2>&1
-            else
-                dnf -y update >/dev/null 2>&1 && dnf install -y -q wget curl tar tzdata sqlite jq >/dev/null 2>&1
-            fi
-        ;;
-        *)
-            apt-get update >/dev/null 2>&1 && apt-get install -y -q wget curl tar tzdata sqlite3 jq >/dev/null 2>&1
-        ;;
+            [[ "$VERSION_ID" =~ ^7 ]] && yum -y -q update && yum install -y -q wget curl tar tzdata sqlite jq || \
+            dnf -y -q update && dnf install -y -q wget curl tar tzdata sqlite jq ;;
+        *) apt-get update -qq && apt-get install -y -qq wget curl tar tzdata sqlite3 jq 2>&1 | grep -v "^[WE]:" ;;
     esac
-    echo -e "${green}✓${plain} Dependencies installed"
+    echo -e "${g}✓${p} Dependencies installed"
 }
 
-# --- Install 3X-UI ---
+# Install 3X-UI
 install_3xui() {
-    echo -e "${yellow}→${plain} Installing 3x-ui..."
-    
+    echo -e "${y}→${p} Installing 3x-ui..."
     cd /usr/local/
     
-    tag_version=$(curl -Ls "https://api.github.com/repos/drafwodgaming/3x-ui-caddy/releases/latest" \
-        | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-    [[ ! -n "$tag_version" ]] && echo -e "${red}✗ Failed to fetch version${plain}" && exit 1
+    tag=$(curl -sL "https://api.github.com/repos/drafwodgaming/3x-ui-caddy/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+    [[ -z "$tag" ]] && echo -e "${r}✗ Version fetch failed${p}" && exit 1
     
-    wget --inet4-only -q -O /usr/local/x-ui-linux-$(arch).tar.gz \
-        https://github.com/drafwodgaming/3x-ui-caddy/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz
+    wget -q -O x-ui-linux-$(arch).tar.gz "https://github.com/drafwodgaming/3x-ui-caddy/releases/download/${tag}/x-ui-linux-$(arch).tar.gz" || { echo -e "${r}✗ Download failed${p}"; exit 1; }
+    wget -q -O /usr/bin/x-ui "https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/main/x-ui.sh"
     
-    [[ $? -ne 0 ]] && echo -e "${red}✗ Download failed${plain}" && exit 1
+    [[ -e /usr/local/x-ui/ ]] && systemctl stop x-ui 2>/dev/null && rm -rf /usr/local/x-ui/
     
-    wget --inet4-only -q -O /usr/bin/x-ui-temp \
-        https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/main/x-ui.sh
+    tar xzf x-ui-linux-$(arch).tar.gz && rm x-ui-linux-$(arch).tar.gz
+    cd x-ui && chmod +x x-ui x-ui.sh
     
-    if [[ -e /usr/local/x-ui/ ]]; then
-        systemctl stop x-ui 2>/dev/null || true
-        rm /usr/local/x-ui/ -rf
-    fi
+    [[ $(arch) =~ ^armv[567]$ ]] && mv bin/xray-linux-$(arch) bin/xray-linux-arm && chmod +x bin/xray-linux-arm
+    chmod +x x-ui bin/xray-linux-$(arch) /usr/bin/x-ui
     
-    tar zxf x-ui-linux-$(arch).tar.gz >/dev/null 2>&1
-    rm x-ui-linux-$(arch).tar.gz -f
-    
-    cd x-ui
-    chmod +x x-ui x-ui.sh
-    
-    if [[ $(arch) == "armv5" || $(arch) == "armv6" || $(arch) == "armv7" ]]; then
-        mv bin/xray-linux-$(arch) bin/xray-linux-arm
-        chmod +x bin/xray-linux-arm
-    fi
-    chmod +x x-ui bin/xray-linux-$(arch)
-    
-    mv -f /usr/bin/x-ui-temp /usr/bin/x-ui
-    chmod +x /usr/bin/x-ui
-    
-    config_webBasePath=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 18 | head -n 1)
-    
-    /usr/local/x-ui/x-ui setting -username "${XUI_USERNAME}" -password "${XUI_PASSWORD}" \
-        -port "${PANEL_PORT}" -webBasePath "${config_webBasePath}" >/dev/null 2>&1
+    webpath=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 18)
+    /usr/local/x-ui/x-ui setting -username "$XUI_USERNAME" -password "$XUI_PASSWORD" -port "$PANEL_PORT" -webBasePath "$webpath" >/dev/null 2>&1
     
     cp -f x-ui.service /etc/systemd/system/
-    systemctl daemon-reload
-    systemctl enable x-ui >/dev/null 2>&1
-    systemctl start x-ui
-    
-    # Wait for service to be ready
+    systemctl daemon-reload && systemctl enable x-ui >/dev/null 2>&1 && systemctl start x-ui
     sleep 5
-    
     /usr/local/x-ui/x-ui migrate >/dev/null 2>&1
     
-    echo -e "${green}✓${plain} 3x-ui ${tag_version} installed"
+    echo -e "${g}✓${p} 3x-ui $tag installed"
 }
 
-# --- Install Caddy ---
+# Install Caddy
 install_caddy() {
-    echo -e "${yellow}→${plain} Installing Caddy..."
-    
-    apt update >/dev/null 2>&1 && apt install -y ca-certificates curl gnupg >/dev/null 2>&1
+    echo -e "${y}→${p} Installing Caddy..."
+    apt update -qq && apt install -y -qq ca-certificates curl gnupg 2>&1 | grep -v "^[WE]:"
     install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key 2>/dev/null \
-        | gpg --dearmor -o /etc/apt/keyrings/caddy.gpg 2>/dev/null
-    echo "deb [signed-by=/etc/apt/keyrings/caddy.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main" \
-        | tee /etc/apt/sources.list.d/caddy.list >/dev/null
-    apt update >/dev/null 2>&1
-    apt install -y caddy >/dev/null 2>&1
-    
-    echo -e "${green}✓${plain} Caddy installed"
-}
-
-# --- Configure Caddy ---
-configure_caddy() {
-    echo -e "${yellow}→${plain} Configuring reverse proxy..."
+    curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key 2>/dev/null | gpg --dearmor -o /etc/apt/keyrings/caddy.gpg 2>/dev/null
+    echo "deb [signed-by=/etc/apt/keyrings/caddy.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main" > /etc/apt/sources.list.d/caddy.list
+    apt update -qq && apt install -y -qq caddy 2>&1 | grep -v "^[WE]:"
     
     cat > /etc/caddy/Caddyfile <<EOF
- $PANEL_DOMAIN:8443 {
+$PANEL_DOMAIN:8443 {
     encode gzip
     reverse_proxy 127.0.0.1:$PANEL_PORT
     tls internal
 }
 
- $SUB_DOMAIN:8443 {
+$SUB_DOMAIN:8443 {
     encode gzip
     reverse_proxy 127.0.0.1:$SUB_PORT
 }
 EOF
     
-    systemctl restart caddy
-    # Wait for service to be ready
-    sleep 5
-    echo -e "${green}✓${plain} Caddy configured"
+    systemctl restart caddy && sleep 5
+    echo -e "${g}✓${p} Caddy configured"
 }
 
-
-# --- Show summary ---
+# Show summary
 show_summary() {
-    sleep 2
     PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>/dev/null)
-    ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
-    ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+')
-    SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
+    PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
+    WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+')
+    IP=$(curl -s ifconfig.me 2>/dev/null || curl -s api.ipify.org)
     
     clear
-    echo -e "${green}"
-    echo "  ╭─────────────────────────────────────────╮"
-    echo "  │                                         │"
-    echo "  │         Installation Complete           │"
-    echo "  │                                         │"
-    echo "  ╰─────────────────────────────────────────╯"
-    echo -e "${plain}"
+    echo -e "${g}
+  ╭─────────────────────────────────────────╮
+  │         Installation Complete          │
+  ╰─────────────────────────────────────────╯${p}\n"
     
-    echo -e "${cyan}┌ Credentials${plain}"
-    echo -e "${cyan}│${plain}"
-    echo -e "${cyan}│${plain}  Username    ${green}${XUI_USERNAME}${plain}"
-    echo -e "${cyan}│${plain}  Password    ${green}${XUI_PASSWORD}${plain}"
-    echo -e "${cyan}│${plain}"
-    echo -e "${cyan}└${plain}"
+    echo -e "${c}┌ Credentials${p}"
+    echo -e "${c}│${p}  Username    ${g}$XUI_USERNAME${p}"
+    echo -e "${c}│${p}  Password    ${g}$XUI_PASSWORD${p}"
+    echo -e "${c}└${p}\n"
     
-    echo -e "\n${cyan}┌ Access URLs${plain}"
-    echo -e "${cyan}│${plain}"
-    
+    echo -e "${c}┌ Access URLs${p}"
     if [[ "$USE_CADDY" == "true" ]]; then
-        echo -e "${cyan}│${plain}  Panel (HTTPS)    ${blue}https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}${plain}"
-        echo -e "${cyan}│${plain}  Subscription     ${blue}https://${SUB_DOMAIN}:8443/${plain}"
+        echo -e "${c}│${p}  Panel        ${b}https://$PANEL_DOMAIN:8443$WEBBASE${p}"
+        echo -e "${c}│${p}  Subscription ${b}https://$SUB_DOMAIN:8443/${p}"
     else
-        echo -e "${cyan}│${plain}  Panel (Direct)   ${blue}http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}${plain}"
+        echo -e "${c}│${p}  Panel        ${b}http://$IP:$PORT$WEBBASE${p}"
     fi
+    echo -e "${c}└${p}\n"
     
-    echo -e "${cyan}│${plain}"
-    echo -e "${cyan}└${plain}"
-    
-    if [[ "$USE_CADDY" == "true" ]]; then
-        echo -e "\n${yellow}⚠  Panel is not secure with SSL certificate${plain}"
-        echo -e "${yellow}   Configure SSL in panel settings for production${plain}"
-    fi
+    [[ "$USE_CADDY" == "true" ]] && echo -e "${y}⚠  Configure SSL in panel for production${p}\n"
 }
 
-api_login() {
-    echo -e "${yellow}→${plain} Authenticating..."
+# API functions
+api_call() {
+    local endpoint=$1
+    local method=${2:-GET}
+    local data=$3
     
-    if [[ "$USE_CADDY" == "true" ]]; then
-        PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
-    else
-        SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
-        PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
-    fi
+    URL=$([[ "$USE_CADDY" == "true" ]] && echo "https://$PANEL_DOMAIN:8443$WEBBASE" || echo "http://$(curl -s ifconfig.me):$PORT$WEBBASE")
     
-    local response=$(curl -k -s -c /tmp/xui_cookies.txt -X POST \
-        "${PANEL_URL}login" \
+    curl -sk -b /tmp/xui_cookies.txt -X $method "${URL}${endpoint}" \
         -H "Content-Type: application/json" \
-        -H "Accept: application/json" \
-        -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" 2>/dev/null)
-    
-    if echo "$response" | jq -e '.success == true' >/dev/null 2>&1; then
-        echo -e "${green}✓${plain} Authentication successful"
-        return 0
-    else
-        echo -e "${red}✗${plain} Authentication failed"
-        echo "Response was: $response"
-        return 1
-    fi
+        ${data:+-d "$data"} 2>/dev/null
 }
 
-generate_uuid() {
-    # Determine the panel URL based on whether Caddy is used
-    if [[ "$USE_CADDY" == "true" ]]; then
-        PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
-    else
-        SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
-        PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
-    fi
+create_inbound() {
+    echo -e "${y}→${p} Creating VLESS Reality inbound..."
     
-    local response=$(curl -k -s -b /tmp/xui_cookies.txt \
-        "${PANEL_URL}panel/api/server/getNewUUID" 2>/dev/null)
+    # Login
+    WEBBASE=$(/usr/local/x-ui/x-ui setting -show true 2>/dev/null | grep -oP 'webBasePath: \K\S+')
+    PORT=$(/usr/local/x-ui/x-ui setting -show true 2>/dev/null | grep -oP 'port: \K\d+')
     
-    # Fix: Extract just the UUID value, not the entire object
-    local uuid=$(echo "$response" | jq -r '.obj.uuid // empty' 2>/dev/null)
+    URL=$([[ "$USE_CADDY" == "true" ]] && echo "https://$PANEL_DOMAIN:8443$WEBBASE" || echo "http://$(curl -s ifconfig.me):$PORT$WEBBASE")
     
-    if [[ -n "$uuid" && "$uuid" != "null" ]]; then
-        echo "$uuid"
-    else
-        echo ""
-    fi
-}
-
-generate_reality_keys() {
-    # Determine the panel URL based on whether Caddy is used
-    if [[ "$USE_CADDY" == "true" ]]; then
-        PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
-    else
-        SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
-        PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
-    fi
+    auth=$(curl -sk -c /tmp/xui_cookies.txt -X POST "${URL}/login" \
+        -H "Content-Type: application/json" \
+        -d "{\"username\":\"$XUI_USERNAME\",\"password\":\"$XUI_PASSWORD\"}" 2>/dev/null)
     
-    local response=$(curl -k -s -b /tmp/xui_cookies.txt \
-        "${PANEL_URL}panel/api/server/getNewX25519Cert" 2>/dev/null)
+    [[ $(echo "$auth" | jq -r '.success') != "true" ]] && { echo -e "${r}✗ Auth failed${p}"; return 1; }
     
-    REALITY_PRIVATE_KEY=$(echo "$response" | jq -r '.obj.privateKey // empty' 2>/dev/null)
-    REALITY_PUBLIC_KEY=$(echo "$response" | jq -r '.obj.publicKey // empty' 2>/dev/null)
+    # Generate UUID and keys
+    uuid=$(api_call "panel/api/server/getNewUUID" | jq -r '.obj.uuid')
+    keys=$(api_call "panel/api/server/getNewX25519Cert")
+    privkey=$(echo "$keys" | jq -r '.obj.privateKey')
+    pubkey=$(echo "$keys" | jq -r '.obj.publicKey')
+    shortid=$(openssl rand -hex 8)
     
-    if [[ -z "$REALITY_PRIVATE_KEY" || "$REALITY_PRIVATE_KEY" == "null" ]]; then
-        REALITY_PRIVATE_KEY=""
-    fi
+    [[ -z "$uuid" || -z "$privkey" || -z "$pubkey" ]] && { echo -e "${r}✗ Key generation failed${p}"; return 1; }
     
-    if [[ -z "$REALITY_PUBLIC_KEY" || "$REALITY_PUBLIC_KEY" == "null" ]]; then
-        REALITY_PUBLIC_KEY=""
-    fi
-}
-
-create_vless_reality_inbound() {
-    echo -e "${yellow}→${plain} Creating VLESS Reality inbound..."
-    
-    # Предустановленные настройки для инбаунда
-    REALITY_PORT=443
-    REALITY_SNI="web.max.ru"
-    REALITY_DEST="web.max.ru:443"
-    CLIENT_EMAIL="user"
-    
-    CLIENT_UUID=$(generate_uuid)
-    if [[ -z "$CLIENT_UUID" ]]; then
-        echo -e "${red}✗${plain} Failed to generate UUID"
-        return 1
-    fi
-
-    # Базовая проверка формата UUID
-    if [[ ! "$CLIENT_UUID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
-        echo -e "${red}✗${plain} Generated UUID has invalid format: $CLIENT_UUID"
-        return 1
-    fi
-    
-    echo -e "${cyan}│${plain} UUID generated: $CLIENT_UUID"
-    
-    generate_reality_keys
-    if [[ -z "$REALITY_PRIVATE_KEY" || -z "$REALITY_PUBLIC_KEY" ]]; then
-        echo -e "${red}✗${plain} Failed to generate Reality keys"
-        return 1
-    fi
-    echo -e "${cyan}│${plain} Reality keys generated"
-    echo -e "${cyan}│${plain} Private Key: ${REALITY_PRIVATE_KEY:0:20}..."
-    echo -e "${cyan}│${plain} Public Key:  ${REALITY_PUBLIC_KEY:0:20}..."
-    
-    SHORT_ID=$(openssl rand -hex 8)
-
-    # --- Создание JSON-полезной нагрузки с PUBLIC KEY ---
-    local inbound_json
-    inbound_json=$(jq -n \
-        --argjson port "$REALITY_PORT" \
-        --arg uuid "$CLIENT_UUID" \
-        --arg email "$CLIENT_EMAIL" \
-        --arg dest "$REALITY_DEST" \
-        --arg sni "$REALITY_SNI" \
-        --arg privkey "$REALITY_PRIVATE_KEY" \
-        --arg pubkey "$REALITY_PUBLIC_KEY" \
-        --arg shortid "$SHORT_ID" \
-        --arg remark "VLESS-Reality-Vision" \
+    # Create inbound
+    payload=$(jq -n \
+        --arg uuid "$uuid" \
+        --arg privkey "$privkey" \
+        --arg pubkey "$pubkey" \
+        --arg shortid "$shortid" \
         '{
-            enable: true,
-            port: $port,
-            protocol: "vless",
-            settings: (
-                {
-                    clients: [{ 
-                        id: $uuid, 
-                        flow: "xtls-rprx-vision", 
-                        email: $email, 
-                        limitIp: 0, 
-                        totalGB: 0, 
-                        expiryTime: 0, 
-                        enable: true, 
-                        tgId: "", 
-                        subId: "" 
-                    }],
-                    decryption: "none",
-                    fallbacks: []
-                } | @json
-            ),
-            streamSettings: (
-                {
-                    network: "tcp",
-                    security: "reality",
-                    realitySettings: {
-                        show: false,
-                        dest: $dest,
-                        xver: 0,
-                        serverNames: [$sni],
-                        privateKey: $privkey,
-                        publicKey: $pubkey,
-                        minClientVer: "",
-                        maxClientVer: "",
-                        maxTimeDiff: 0,
-                        shortIds: [$shortid]
-                    },
-                    tcpSettings: { 
-                        acceptProxyProtocol: false, 
-                        header: { type: "none" } 
-                    }
-                } | @json
-            ),
-            sniffing: (
-                {
-                    enabled: true,
-                    destOverride: ["http", "tls", "quic", "fakedns"],
-                    metadataOnly: false,
-                    routeOnly: false
-                } | @json
-            ),
-            remark: $remark,
-            listen: "",
-            allocate: { 
-                strategy: "always", 
-                refresh: 5, 
-                concurrency: 3 
-            }
-        }'
-    )
-
-    # --- Отладочная информация ---
-    echo -e "${yellow}→${plain} Payload to be sent to API:"
-    echo "$inbound_json" | jq .
-    echo -e "${blue}└${plain}"
+            enable: true, port: 443, protocol: "vless", remark: "VLESS-Reality-Vision",
+            settings: ({clients:[{id:$uuid,flow:"xtls-rprx-vision",email:"user",limitIp:0,totalGB:0,expiryTime:0,enable:true,tgId:"",subId:""}],decryption:"none",fallbacks:[]}|@json),
+            streamSettings: ({network:"tcp",security:"reality",realitySettings:{show:false,dest:"web.max.ru:443",xver:0,serverNames:["web.max.ru"],privateKey:$privkey,publicKey:$pubkey,minClientVer:"",maxClientVer:"",maxTimeDiff:0,shortIds:[$shortid]},tcpSettings:{acceptProxyProtocol:false,header:{type:"none"}}}|@json),
+            sniffing: ({enabled:true,destOverride:["http","tls","quic","fakedns"],metadataOnly:false,routeOnly:false}|@json),
+            listen: "", allocate: {strategy:"always",refresh:5,concurrency:3}
+        }')
     
-    # Определение URL панели
-    if [[ "$USE_CADDY" == "true" ]]; then
-        PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
-    else
-        SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
-        PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
-    fi
+    result=$(api_call "panel/api/inbounds/add" POST "$payload")
     
-    local response=$(curl -k -s -b /tmp/xui_cookies.txt -X POST \
-        "${PANEL_URL}panel/api/inbounds/add" \
-        -H "Content-Type: application/json" \
-        -H "Accept: application/json" \
-        -d "$inbound_json" 2>/dev/null)
-
-    echo -e "${yellow}→${plain} API Response:"
-    echo "$response" | jq .
-    echo -e "${blue}└${plain}"
-    
-    if echo "$response" | jq -e '.success == true' >/dev/null 2>&1; then
-        echo -e "${green}✓${plain} VLESS Reality inbound created"
+    if [[ $(echo "$result" | jq -r '.success') == "true" ]]; then
+        echo -e "${g}✓${p} Inbound created"
         
-        cat > /root/vless_reality_config.txt <<EOF
-═══════════════════════════════════════════════════
+        cat > /root/vless_reality.txt <<EOF
 VLESS Reality Configuration
-═══════════════════════════════════════════════════
-
-Server IP: $(curl -s ifconfig.me 2>/dev/null)
-Port: ${REALITY_PORT}
-UUID: ${CLIENT_UUID}
+───────────────────────────────────────────
+Server: $(curl -s ifconfig.me)
+Port: 443
+UUID: $uuid
 Flow: xtls-rprx-vision
-Encryption: none
-Network: tcp
-Security: reality
-
-Reality Settings:
-  SNI: ${REALITY_SNI}
-  Public Key: ${REALITY_PUBLIC_KEY}
-  Short ID: ${SHORT_ID}
-  Spider X: /
-
-Client Email: ${CLIENT_EMAIL}
-
-═══════════════════════════════════════════════════
-Configuration saved to: /root/vless_reality_config.txt
-═══════════════════════════════════════════════════
+Public Key: $pubkey
+Short ID: $shortid
+SNI: web.max.ru
+───────────────────────────────────────────
 EOF
         
-        echo ""
-        echo -e "${cyan}┌ VLESS Reality Configuration${plain}"
-        echo -e "${cyan}│${plain}"
-        echo -e "${cyan}│${plain}  Port             ${green}${REALITY_PORT}${plain}"
-        echo -e "${cyan}│${plain}  UUID             ${green}${CLIENT_UUID}${plain}"
-        echo -e "${cyan}│${plain}  Flow             ${green}xtls-rprx-vision${plain}"
-        echo -e "${cyan}│${plain}  Public Key       ${green}${REALITY_PUBLIC_KEY}${plain}"
-        echo -e "${cyan}│${plain}  Short ID         ${green}${SHORT_ID}${plain}"
-        echo -e "${cyan}│${plain}  SNI              ${green}${REALITY_SNI}${plain}"
-        echo -e "${cyan}│${plain}"
-        echo -e "${cyan}│${plain}  ${yellow}Config: /root/vless_reality_config.txt${plain}"
-        echo -e "${cyan}│${plain}"
-        echo -e "${cyan}└${plain}"
-        
-        return 0
+        echo -e "\n${c}┌ VLESS Config${p}"
+        echo -e "${c}│${p}  UUID        ${g}$uuid${p}"
+        echo -e "${c}│${p}  Public Key  ${g}$pubkey${p}"
+        echo -e "${c}│${p}  Short ID    ${g}$shortid${p}"
+        echo -e "${c}│${p}  ${y}Saved: /root/vless_reality.txt${p}"
+        echo -e "${c}└${p}\n"
     else
-        echo -e "${red}✗${plain} Failed to create inbound"
-        echo "Response was: $response"
-        return 1
+        echo -e "${r}✗${p} Inbound creation failed"
     fi
 }
 
-configure_reality_inbound() {
-    echo -e "\n${magenta}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${plain}"
-    echo -e "${magenta}  Creating VLESS Reality Inbound...${plain}"
-    echo -e "${magenta}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${plain}\n"
-
-    if api_login; then
-        if create_vless_reality_inbound; then
-            echo -e "\n${green}✓ VLESS Reality inbound configured successfully!${plain}\n"
-        else
-            echo -e "\n${yellow}⚠ Failed to create inbound automatically${plain}"
-            echo -e "${yellow}  Please create it manually in the panel${plain}\n"
-        fi
-    else
-        echo -e "\n${yellow}⚠ API authentication failed${plain}"
-        echo -e "${yellow}  Please create inbound manually in the panel${plain}\n"
-    fi
-}
-
-# --- Main execution ---
+# Main
 main() {
     print_banner
-    read_credentials
-    ask_caddy
-    ask_default_inbound
-    read_parameters
-    install_base
+    get_input
+    install_deps
     install_3xui
-    
-    # Only install and configure Caddy if user chose to use it
-    if [[ "$USE_CADDY" == "true" ]]; then
-        install_caddy
-        configure_caddy
-    fi
-    
+    [[ "$USE_CADDY" == "true" ]] && install_caddy
     show_summary
-    
-    # Only create default inbound if user chose to
-    if [[ "$CREATE_DEFAULT_INBOUND" == "true" ]]; then
-        configure_reality_inbound
-    fi
+    [[ "$CREATE_INBOUND" == "true" ]] && create_inbound
 }
 
 main
