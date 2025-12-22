@@ -107,7 +107,7 @@ install_3xui() {
     [[ $? -ne 0 ]] && echo -e "${red}✗ Download failed${plain}" && exit 1
     
     wget --inet4-only -q -O /usr/bin/x-ui-temp \
-        https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.sh
+        https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/main/x-ui.sh
     
     # Stop old service
     if [[ -e /usr/local/x-ui/ ]]; then
