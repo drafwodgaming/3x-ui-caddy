@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.123
+#UPDATE 2.12
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -429,7 +429,7 @@ create_vless_reality_inbound() {
                         shortIds: [$shortid]
                     },
                     tcpSettings: { acceptProxyProtocol: false, header: { type: "none" } }
-                }
+                } | @json
             ),
             sniffing: (
                 {
