@@ -55,10 +55,10 @@ print_banner() {
 read_parameters() {
     echo -e "${blue}┌ Configuration${plain}"
     echo -e "${blue}│${plain}"
-    read -rp "$(echo -e ${blue}│${plain}) Panel port [${green}8080${plain}]: " PANEL_PORT
+    read -rp "$(echo -e ${blue}│${plain}) Panel port [8080]: " PANEL_PORT
     PANEL_PORT=${PANEL_PORT:-8080}
     
-    read -rp "$(echo -e ${blue}│${plain}) Subscription port [${green}2096${plain}]: " SUB_PORT
+    read -rp "$(echo -e ${blue}│${plain}) Subscription port [2096]: " SUB_PORT
     SUB_PORT=${SUB_PORT:-2096}
     
     read -rp "$(echo -e ${blue}│${plain}) Panel domain: " PANEL_DOMAIN
