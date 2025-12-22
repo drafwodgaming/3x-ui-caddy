@@ -260,7 +260,7 @@ api_login() {
     echo -e "${yellow}→${plain} Authenticating..."
     
     local response=$(curl -s -c /tmp/xui_cookies.txt -X POST \
-        "http://${PANEL_DOMAIN}:${ACTUAL_PORT}/${ACTUAL_WEBBASE}/login" \
+        "https://${PANEL_DOMAIN}:${ACTUAL_PORT}/${ACTUAL_WEBBASE}/login" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
         -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" 2>/dev/null)
