@@ -191,10 +191,10 @@ update_x-ui() {
     chmod +x x-ui bin/xray-linux-$(arch) >/dev/null 2>&1
     
     echo -e "${green}Downloading and installing x-ui.sh script...${plain}"
-    ${wget_bin} -O /usr/bin/x-ui https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.sh >/dev/null 2>&1
+    ${wget_bin} -O /usr/bin/x-ui https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/main/x-ui.sh >/dev/null 2>&1
     if [[ $? -ne 0 ]]; then
         echo -e "${yellow}Trying to fetch x-ui with IPv4...${plain}"
-        ${wget_bin} --inet4-only -O /usr/bin/x-ui https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.sh >/dev/null 2>&1
+        ${wget_bin} --inet4-only -O /usr/bin/x-ui https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/main/x-ui.sh >/dev/null 2>&1
         if [[ $? -ne 0 ]]; then
             _fail "ERROR: Failed to download x-ui.sh script, please be sure that your server can access GitHub"
         fi
@@ -213,9 +213,9 @@ update_x-ui() {
     
     if [[ $release == "alpine" ]]; then
         echo -e "${green}Downloading and installing startup unit x-ui.rc...${plain}"
-        ${wget_bin} -O /etc/init.d/x-ui https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.rc >/dev/null 2>&1
+        ${wget_bin} -O /etc/init.d/x-ui https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/main/x-ui.rc >/dev/null 2>&1
         if [[ $? -ne 0 ]]; then
-            ${wget_bin} --inet4-only -O /etc/init.d/x-ui https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.rc >/dev/null 2>&1
+            ${wget_bin} --inet4-only -O /etc/init.d/x-ui https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/main/x-ui.rc >/dev/null 2>&1
             if [[ $? -ne 0 ]]; then
                 _fail "ERROR: Failed to download startup unit x-ui.rc, please be sure that your server can access GitHub"
             fi
