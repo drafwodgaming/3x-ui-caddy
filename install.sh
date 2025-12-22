@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE
+#UPDATE 2.12 - Final Version
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -169,6 +169,9 @@ install_3xui() {
     systemctl enable x-ui >/dev/null 2>&1
     systemctl start x-ui
     
+    # Wait for service to be ready
+    sleep 5
+    
     /usr/local/x-ui/x-ui migrate >/dev/null 2>&1
     
     echo -e "${green}✓${plain} 3x-ui ${tag_version} installed"
@@ -208,6 +211,8 @@ configure_caddy() {
 EOF
     
     systemctl restart caddy
+    # Wait for service to be ready
+    sleep 5
     echo -e "${green}✓${plain} Caddy configured"
 }
 
@@ -252,9 +257,9 @@ show_summary() {
 api_login() {
     echo -e "${yellow}→${plain} Authenticating..."
     
-    # ИЗМЕНЕНО: Заменен ${ACTUAL_PORT} на 8443 для подключения через Caddy
+    # ИЗМЕНЕНО: Добавлен недостающий слэш в URL
     local response=$(curl -k -s -c /tmp/xui_cookies.txt -X POST \
-        "https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}login" \
+        "https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}/login" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
         -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" 2>/dev/null)
@@ -264,15 +269,15 @@ api_login() {
         return 0
     else
         echo -e "${red}✗${plain} Authentication failed"
-        echo "Response was: $response" # Добавим вывод ответа для отладки
+        echo "Response was: $response"
         return 1
     fi
 }
 
 generate_uuid() {
-    # ИЗМЕНЕНО: Заменен ${ACTUAL_PORT} на 8443 для подключения через Caddy
+    # ИЗМЕНЕНО: Добавлен недостающий слэш в URL
     local response=$(curl -k -s -b /tmp/xui_cookies.txt \
-        "https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}panel/api/server/getNewUUID" 2>/dev/null)
+        "https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}/panel/api/server/getNewUUID" 2>/dev/null)
     
     local uuid=$(echo "$response" | jq -r '.obj // empty' 2>/dev/null)
     
@@ -284,9 +289,9 @@ generate_uuid() {
 }
 
 generate_reality_keys() {
-    # ИЗМЕНЕНО: Заменен ${ACTUAL_PORT} на 8443 для подключения через Caddy
+    # ИЗМЕНЕНО: Добавлен недостающий слэш в URL
     local response=$(curl -k -s -b /tmp/xui_cookies.txt \
-        "https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}panel/api/server/getNewX25519Cert" 2>/dev/null)
+        "https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}/panel/api/server/getNewX25519Cert" 2>/dev/null)
     
     REALITY_PRIVATE_KEY=$(echo "$response" | jq -r '.obj.privateKey // empty' 2>/dev/null)
     REALITY_PUBLIC_KEY=$(echo "$response" | jq -r '.obj.publicKey // empty' 2>/dev/null)
@@ -302,52 +307,36 @@ generate_reality_keys() {
 
 create_vless_reality_inbound() {
     echo -e "${yellow}→${plain} Creating VLESS Reality inbound..."
-
-    # Generate client UUID
+    
     CLIENT_UUID=$(generate_uuid)
     if [[ -z "$CLIENT_UUID" ]]; then
         echo -e "${red}✗${plain} Failed to generate UUID"
         return 1
     fi
     echo -e "${cyan}│${plain} UUID generated"
-
-    # Generate Reality keys
+    
     generate_reality_keys
     if [[ -z "$REALITY_PRIVATE_KEY" || -z "$REALITY_PUBLIC_KEY" ]]; then
         echo -e "${red}✗${plain} Failed to generate Reality keys"
         return 1
     fi
     echo -e "${cyan}│${plain} Reality keys generated"
-
-    # Generate short ID
+    
     SHORT_ID=$(openssl rand -hex 8)
 
-    # Create settings JSON as string
+    # ИЗМЕНЕНО: Создаем вложенные JSON-объекты и преобразуем их в строки.
+    # Это необходимо, так как API ожидает, что поля settings, streamSettings и sniffing будут строками, содержащими JSON.
     settings_json=$(jq -n \
-        --arg id "$CLIENT_UUID" \
-        --arg flow "xtls-rprx-vision" \
+        --arg uuid "$CLIENT_UUID" \
         --arg email "$CLIENT_EMAIL" \
         '{
-            clients: [
-                {
-                    id: $id,
-                    flow: $flow,
-                    email: $email,
-                    limitIp: 0,
-                    totalGB: 0,
-                    expiryTime: 0,
-                    enable: true,
-                    tgId: "",
-                    subId: ""
-                }
-            ],
+            clients: [{ id: $uuid, flow: "xtls-rprx-vision", email: $email, limitIp: 0, totalGB: 0, expiryTime: 0, enable: true, tgId: "", subId: "" }],
             decryption: "none",
             fallbacks: []
-        } | @json'
+        }'
     )
 
-    # Create streamSettings JSON as string
-    stream_json=$(jq -n \
+    streamSettings_json=$(jq -n \
         --arg dest "$REALITY_DEST" \
         --arg sni "$REALITY_SNI" \
         --arg privkey "$REALITY_PRIVATE_KEY" \
@@ -366,46 +355,59 @@ create_vless_reality_inbound() {
                 maxTimeDiff: 0,
                 shortIds: [$shortid]
             },
-            tcpSettings: {
-                acceptProxyProtocol: false,
-                header: { type: "none" }
-            }
-        } | @json'
-    )
-
-    # Assemble full inbound JSON
-    inbound_json=$(jq -n \
-        --argjson enable true \
-        --arg port "$REALITY_PORT" \
-        --arg protocol "vless" \
-        --arg settings "$settings_json" \
-        --arg stream "$stream_json" \
-        --arg remark "VLESS-Reality-Vision" \
-        --arg listen "" \
-        --arg allocate '{"strategy":"always","refresh":5,"concurrency":3}' \
-        '{
-            enable: $enable,
-            port: ($port|tonumber),
-            protocol: $protocol,
-            settings: $settings,
-            streamSettings: $stream,
-            remark: $remark,
-            listen: $listen,
-            allocate: $allocate
+            tcpSettings: { acceptProxyProtocol: false, header: { type: "none" } }
         }'
     )
 
-    # Send API request
+    sniffing_json=$(jq -n \
+        '{
+            enabled: true,
+            destOverride: ["http", "tls", "quic", "fakedns"],
+            metadataOnly: false,
+            routeOnly: false
+        }'
+    )
+    
+    allocate_json=$(jq -n \
+        '{
+            strategy: "always",
+            refresh: 5,
+            concurrency: 3
+        }'
+    )
+
+    # ИЗМЕНЕНО: Создаем основной JSON, используя строковые представления вложенных объектов
+    local inbound_json
+    inbound_json=$(jq -n \
+        --argjson port "$REALITY_PORT" \
+        --arg settings_str "$settings_json" \
+        --arg streamSettings_str "$streamSettings_json" \
+        --arg sniffing_str "$sniffing_json" \
+        --arg allocate_str "$allocate_json" \
+        --arg remark "VLESS-Reality-Vision" \
+        '{
+            enable: true,
+            port: $port,
+            protocol: "vless",
+            settings: $settings_str,
+            streamSettings: $streamSettings_str,
+            sniffing: $sniffing_str,
+            remark: $remark,
+            listen: "",
+            allocate: $allocate_str
+        }'
+    )
+    
+    # ИЗМЕНЕНО: Добавлен недостающий слэш в URL
     local response=$(curl -k -s -b /tmp/xui_cookies.txt -X POST \
-        "https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}panel/api/inbounds/add" \
+        "https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}/panel/api/inbounds/add" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
         -d "$inbound_json" 2>/dev/null)
-
+    
     if echo "$response" | jq -e '.success == true' >/dev/null 2>&1; then
         echo -e "${green}✓${plain} VLESS Reality inbound created"
-
-        # Save configuration to file
+        
         cat > /root/vless_reality_config.txt <<EOF
 ═══════════════════════════════════════════════════
 VLESS Reality Configuration
@@ -431,7 +433,7 @@ Client Email: ${CLIENT_EMAIL}
 Configuration saved to: /root/vless_reality_config.txt
 ═══════════════════════════════════════════════════
 EOF
-
+        
         echo ""
         echo -e "${cyan}┌ VLESS Reality Configuration${plain}"
         echo -e "${cyan}│${plain}"
@@ -445,7 +447,7 @@ EOF
         echo -e "${cyan}│${plain}  ${yellow}Config: /root/vless_reality_config.txt${plain}"
         echo -e "${cyan}│${plain}"
         echo -e "${cyan}└${plain}"
-
+        
         return 0
     else
         echo -e "${red}✗${plain} Failed to create inbound"
@@ -482,7 +484,6 @@ main() {
     install_caddy
     configure_caddy
     show_summary
-    # ИЗМЕНЕНО: Вызов функции вынесен сюда для лучшей читаемости
     configure_reality_inbound
 }
 
