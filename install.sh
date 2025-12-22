@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.12
+#UPDATE 2.1
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -121,42 +121,28 @@ ask_default_inbound() {
 }
 
 # --- Install base dependencies ---
-# --- Install base dependencies including Postman ---
 install_base() {
     echo -e "\n${yellow}→${plain} Installing dependencies..."
     case "${release}" in
         ubuntu | debian | armbian)
-            apt-get update >/dev/null 2>&1
-            apt-get install -y -q wget curl tar tzdata sqlite3 jq snapd >/dev/null 2>&1
+            apt-get update >/dev/null 2>&1 && apt-get install -y -q wget curl tar tzdata sqlite3 jq >/dev/null 2>&1
         ;;
         fedora | amzn | virtuozzo | rhel | almalinux | rocky | ol)
-            dnf -y update >/dev/null 2>&1
-            dnf install -y -q wget curl tar tzdata sqlite jq snapd >/dev/null 2>&1
+            dnf -y update >/dev/null 2>&1 && dnf install -y -q wget curl tar tzdata sqlite jq >/dev/null 2>&1
         ;;
         centos)
             if [[ "${VERSION_ID}" =~ ^7 ]]; then
-                yum -y update >/dev/null 2>&1
-                yum install -y wget curl tar tzdata sqlite jq epel-release >/dev/null 2>&1
-                yum install -y snapd >/dev/null 2>&1
+                yum -y update >/dev/null 2>&1 && yum install -y wget curl tar tzdata sqlite jq >/dev/null 2>&1
             else
-                dnf -y update >/dev/null 2>&1
-                dnf install -y -q wget curl tar tzdata sqlite jq snapd >/dev/null 2>&1
+                dnf -y update >/dev/null 2>&1 && dnf install -y -q wget curl tar tzdata sqlite jq >/dev/null 2>&1
             fi
         ;;
         *)
-            apt-get update >/dev/null 2>&1
-            apt-get install -y -q wget curl tar tzdata sqlite3 jq snapd >/dev/null 2>&1
+            apt-get update >/dev/null 2>&1 && apt-get install -y -q wget curl tar tzdata sqlite3 jq >/dev/null 2>&1
         ;;
     esac
-
-    # --- Enable Snap and install Postman ---
-    echo -e "\n${yellow}→${plain} Enabling Snap and installing Postman..."
-    systemctl enable --now snapd.socket
-    ln -s /var/lib/snapd/snap /snap 2>/dev/null || true
-    snap install postman >/dev/null 2>&1
-    echo -e "${green}✓${plain} Dependencies and Postman installed"
+    echo -e "${green}✓${plain} Dependencies installed"
 }
-
 
 # --- Install 3X-UI ---
 install_3xui() {
@@ -300,7 +286,6 @@ show_summary() {
 api_login() {
     echo -e "${yellow}→${plain} Authenticating..."
     
-    # Determine the panel URL based on whether Caddy is used
     if [[ "$USE_CADDY" == "true" ]]; then
         PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
     else
@@ -308,11 +293,12 @@ api_login() {
         PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
     fi
     
-    local response=$(curl -k -s -c /tmp/xui_cookies.txt -X POST \
-        "${PANEL_URL}login" \
-        -H "Content-Type: application/json" \
-        -H "Accept: application/json" \
-        -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" 2>/dev/null)
+    local response=$(curl -ks -c /tmp/xui_cookies.txt \
+  -X POST "https://drafwod-test1.duckdns.org:8443/kuGqSYQB01PNpUSm71/login" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{"username":"4YQIcpMtpU","password":"/KWlZ5@TuAGonz(MW<FejP<^Wa.36"}'
+  2>/dev/null)
     
     if echo "$response" | jq -e '.success == true' >/dev/null 2>&1; then
         echo -e "${green}✓${plain} Authentication successful"
