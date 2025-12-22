@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.1
+#UPDATE 2.11
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -295,7 +295,7 @@ api_login() {
     
     # Determine the panel URL based on whether Caddy is used
     if [[ "$USE_CADDY" == "true" ]]; then
-        PANEL_URL="https://${PANEL_DOMAIN}:8443/${ACTUAL_WEBBASE}"
+        PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
     else
         SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
         PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}/${ACTUAL_WEBBASE}"
