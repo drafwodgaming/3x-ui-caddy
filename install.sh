@@ -194,6 +194,29 @@ EOF
     echo -e "${green}✓${plain} Caddy configured"
 }
 
+# --- Configure subscription settings ---
+configure_subscription() {
+    echo -e "${yellow}→${plain} Configuring subscription settings..."
+    
+    DB_PATH="/etc/x-ui/x-ui.db"
+    
+    # Wait for database to be ready
+    sleep 3
+    
+    # Update subscription settings in database
+    sqlite3 "$DB_PATH" <<EOF
+UPDATE settings SET value = 'https://${SUB_DOMAIN}:8443/sub/' WHERE key = 'subURI';
+UPDATE settings SET value = '/sub/' WHERE key = 'subPath';
+UPDATE settings SET value = '${SUB_PORT}' WHERE key = 'subPort';
+UPDATE settings SET value = '1' WHERE key = 'subEnable';
+EOF
+    
+    # Restart x-ui to apply changes
+    systemctl restart x-ui
+    sleep 2
+    
+    echo -e "${green}✓${plain} Subscription configured"
+}
 
 # --- Show summary ---
 show_summary() {
@@ -224,12 +247,21 @@ show_summary() {
     echo -e "${cyan}│${plain}  Panel (HTTPS)    ${blue}https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}${plain}"
     echo -e "${cyan}│${plain}  Panel (Direct)   ${blue}http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}${plain}"
     echo -e "${cyan}│${plain}"
-    echo -e "${cyan}│${plain}  Subscription     ${blue}https://${SUB_DOMAIN}:8443/${plain}"
+    echo -e "${cyan}│${plain}  Subscription     ${blue}https://${SUB_DOMAIN}:8443/sub/${plain}"
     echo -e "${cyan}│${plain}"
     echo -e "${cyan}└${plain}"
     
-    echo -e "\n${yellow}⚠  Panel is not secure with SSL certificate${plain}"
-    echo -e "${yellow}   Configure SSL in panel settings for production${plain}"
+    echo -e "\n${cyan}┌ Subscription Settings (Auto-configured)${plain}"
+    echo -e "${cyan}│${plain}"
+    echo -e "${cyan}│${plain}  Subscription Port:        ${green}${SUB_PORT}${plain}"
+    echo -e "${cyan}│${plain}  Subscription Path:        ${green}/sub/${plain}"
+    echo -e "${cyan}│${plain}  Reverse Proxy URI:        ${green}https://${SUB_DOMAIN}:8443/sub/${plain}"
+    echo -e "${cyan}│${plain}  Subscription:             ${green}Enabled${plain}"
+    echo -e "${cyan}│${plain}"
+    echo -e "${cyan}└${plain}"
+    
+    echo -e "\n${yellow}⚠  Panel is using self-signed SSL certificate${plain}"
+    echo -e "${yellow}   Configure real SSL in panel settings for production${plain}"
     
     echo -e "\n${green}✓ Ready to use!${plain}\n"
 }
@@ -243,6 +275,7 @@ main() {
     install_3xui
     install_caddy
     configure_caddy
+    configure_subscription
     show_summary
 }
 
