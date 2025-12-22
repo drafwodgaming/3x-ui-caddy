@@ -46,12 +46,30 @@ print_banner() {
     echo -e "${cyan}"
     echo "  ╭─────────────────────────────────────────╮"
     echo "  │                                         │"
-    echo "  │       3X-UI + CADDY INSTALLER          │"
+    echo "  │        3X-UI + CADDY INSTALLER          │"
     echo "  │                                         │"
     echo "  ╰─────────────────────────────────────────╯"
     echo -e "${plain}"
 }
 
+# --- Credentials input ---
+read_credentials() {
+    echo -e "${blue}┌ Panel Credentials${plain}"
+    read -rp "$(echo -e ${blue}│${plain}) Username (leave empty to generate): " XUI_USERNAME
+    read -rp "$(echo -e ${blue}│${plain}) Password (leave empty to generate): " XUI_PASSWORD
+
+    if [[ -z "$XUI_USERNAME" ]]; then
+        XUI_USERNAME=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 10 | head -n 1)
+    fi
+    if [[ -z "$XUI_PASSWORD" ]]; then
+        length=$((20 + RANDOM % 11)) # 20-30 symbols
+        XUI_PASSWORD=$(LC_ALL=C tr -dc 'a-zA-Z0-9!@#$%^&*()_+-=' </dev/urandom | fold -w $length | head -n 1)
+    fi
+    echo -e "${cyan}│ Username:${green} $XUI_USERNAME ${cyan}Password:${green} $XUI_PASSWORD${plain}"
+    echo -e "${blue}└${plain}"
+}
+
+# --- Panel ports/domains ---
 read_parameters() {
     echo -e "${blue}┌ Configuration${plain}"
     echo -e "${blue}│${plain}"
@@ -66,6 +84,7 @@ read_parameters() {
     echo -e "${blue}└${plain}"
 }
 
+# --- Install base dependencies ---
 install_base() {
     echo -e "\n${yellow}→${plain} Installing dependencies..."
     case "${release}" in
@@ -89,17 +108,15 @@ install_base() {
     echo -e "${green}✓${plain} Dependencies installed"
 }
 
+# --- Install 3X-UI ---
 install_3xui() {
     echo -e "${yellow}→${plain} Installing 3x-ui..."
     
     cd /usr/local/
     
-    # Get latest version
-    tag_version=$(curl -Ls "https://api.github.com/repos/drafwodgaming/3x-ui-caddy/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-    if [[ ! -n "$tag_version" ]]; then
-        tag_version=$(curl -4 -Ls "https://api.github.com/repos/drafwodgaming/3x-ui-caddy/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-        [[ ! -n "$tag_version" ]] && echo -e "${red}✗ Failed to fetch version${plain}" && exit 1
-    fi
+    tag_version=$(curl -Ls "https://api.github.com/repos/drafwodgaming/3x-ui-caddy/releases/latest" \
+        | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    [[ ! -n "$tag_version" ]] && echo -e "${red}✗ Failed to fetch version${plain}" && exit 1
     
     wget --inet4-only -q -O /usr/local/x-ui-linux-$(arch).tar.gz \
         https://github.com/drafwodgaming/3x-ui-caddy/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz
@@ -109,13 +126,11 @@ install_3xui() {
     wget --inet4-only -q -O /usr/bin/x-ui-temp \
         https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/main/x-ui.sh
     
-    # Stop old service
     if [[ -e /usr/local/x-ui/ ]]; then
         systemctl stop x-ui 2>/dev/null || true
         rm /usr/local/x-ui/ -rf
     fi
     
-    # Extract
     tar zxf x-ui-linux-$(arch).tar.gz >/dev/null 2>&1
     rm x-ui-linux-$(arch).tar.gz -f
     
@@ -131,17 +146,10 @@ install_3xui() {
     mv -f /usr/bin/x-ui-temp /usr/bin/x-ui
     chmod +x /usr/bin/x-ui
     
-    # Configure
     config_webBasePath=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 18 | head -n 1)
-    config_username=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 10 | head -n 1)
-    config_password=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 10 | head -n 1)
     
-    /usr/local/x-ui/x-ui setting -username "${config_username}" -password "${config_password}" \
+    /usr/local/x-ui/x-ui setting -username "${XUI_USERNAME}" -password "${XUI_PASSWORD}" \
         -port "${PANEL_PORT}" -webBasePath "${config_webBasePath}" >/dev/null 2>&1
-    
-    XUI_USERNAME="${config_username}"
-    XUI_PASSWORD="${config_password}"
-    XUI_WEBBASE="${config_webBasePath}"
     
     cp -f x-ui.service /etc/systemd/system/
     systemctl daemon-reload
@@ -153,6 +161,7 @@ install_3xui() {
     echo -e "${green}✓${plain} 3x-ui ${tag_version} installed"
 }
 
+# --- Install Caddy ---
 install_caddy() {
     echo -e "${yellow}→${plain} Installing Caddy..."
     
@@ -168,6 +177,7 @@ install_caddy() {
     echo -e "${green}✓${plain} Caddy installed"
 }
 
+# --- Configure Caddy ---
 configure_caddy() {
     echo -e "${yellow}→${plain} Configuring reverse proxy..."
     
@@ -188,25 +198,34 @@ EOF
     echo -e "${green}✓${plain} Caddy configured"
 }
 
-show_commands() {
-    echo -e "\n${cyan}┌ Available Commands${plain}"
-    echo -e "${cyan}│${plain}"
-    echo -e "${cyan}│${plain}  ${magenta}x-ui${plain}              Admin management"
-    echo -e "${cyan}│${plain}  ${magenta}x-ui start${plain}        Start service"
-    echo -e "${cyan}│${plain}  ${magenta}x-ui stop${plain}         Stop service"
-    echo -e "${cyan}│${plain}  ${magenta}x-ui restart${plain}      Restart service"
-    echo -e "${cyan}│${plain}  ${magenta}x-ui status${plain}       Check status"
-    echo -e "${cyan}│${plain}  ${magenta}x-ui settings${plain}     View settings"
-    echo -e "${cyan}│${plain}  ${magenta}x-ui update${plain}       Update panel"
-    echo -e "${cyan}│${plain}  ${magenta}x-ui uninstall${plain}    Remove panel"
-    echo -e "${cyan}│${plain}"
-    echo -e "${cyan}└${plain}"
+# --- Setup VLESS + Reality ---
+setup_vless_reality() {
+    echo -e "${yellow}→${plain} Adding default VLESS Reality configuration..."
+
+    TOKEN=$(/usr/local/x-ui/x-ui auth)  # Получаем API токен
+    curl -s -X POST "http://127.0.0.1:${PANEL_PORT}/v1/proxies" \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "name": "vless_reality_default",
+            "type": "vless",
+            "uuid": "'$(uuidgen)'",
+            "flow": "xtls-rprx-direct",
+            "listen": "",
+            "network": "tcp",
+            "security": "reality",
+            "reality_opts": {
+                "public_key": "server_public_key_here",
+                "short_ids": ["id1","id2"]
+            }
+        }'
+
+    echo -e "${green}✓ Default VLESS Reality configuration added${plain}"
 }
 
+# --- Show summary ---
 show_summary() {
     sleep 2
-    
-    # Get actual settings
     PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>/dev/null)
     ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
     ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+')
@@ -240,19 +259,19 @@ show_summary() {
     echo -e "\n${yellow}⚠  Panel is not secure with SSL certificate${plain}"
     echo -e "${yellow}   Configure SSL in panel settings for production${plain}"
     
-    show_commands
-    
     echo -e "\n${green}✓ Ready to use!${plain}\n"
 }
 
-# Main execution
+# --- Main execution ---
 main() {
     print_banner
+    read_credentials
     read_parameters
     install_base
     install_3xui
     install_caddy
     configure_caddy
+    setup_vless_reality
     show_summary
 }
 
