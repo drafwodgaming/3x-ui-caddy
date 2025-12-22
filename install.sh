@@ -259,7 +259,7 @@ show_summary() {
 api_login() {
     echo -e "${yellow}→${plain} Authenticating..."
     
-    local response=$(curl -s -c /tmp/xui_cookies.txt -X POST \
+    local response=$(curl -k -s -c /tmp/xui_cookies.txt -X POST \
         "https://${PANEL_DOMAIN}:${ACTUAL_PORT}/${ACTUAL_WEBBASE}/login" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
