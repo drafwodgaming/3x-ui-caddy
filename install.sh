@@ -190,27 +190,21 @@ EOF
     echo -e "${green}✓${plain} Caddy configured"
 }
 
-# --- Создание Inbound VLESS + Reality ---
+# --- Создание Inbound VLESS + Reality через Basic Auth ---
 setup_vless_reality() {
     echo -e "${yellow}→${plain} Adding default VLESS Reality configuration..."
-    
-    sleep 5 # Ждем, пока панель запустится
-    
-    TOKEN=$(/usr/local/x-ui/x-ui auth)
-    if [[ -z "$TOKEN" ]]; then
-        echo -e "${red}✗ Failed to get API token. Panel may not be ready.${plain}"
-        return
-    fi
 
-    # Генерация UUID, ключей и short_ids
+    sleep 5 # Ждем, пока панель полностью запустится
+
+    # Генерация UUID, публичного ключа и short_ids
     VLESS_UUID=$(uuidgen)
     REALITY_PUBLIC_KEY=$(LC_ALL=C tr -dc 'a-f0-9' </dev/urandom | fold -w 64 | head -n 1)
     SHORT_ID1=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 8 | head -n 1)
     SHORT_ID2=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 8 | head -n 1)
 
-    # Создание inbound через API
+    # Создание inbound через API с Basic Auth
     curl -s -X POST "http://127.0.0.1:${PANEL_PORT}/v1/proxies" \
-        -H "Authorization: Bearer $TOKEN" \
+        -u "${XUI_USERNAME}:${XUI_PASSWORD}" \
         -H "Content-Type: application/json" \
         -d "{
             \"name\": \"vless_reality_default\",
@@ -235,7 +229,7 @@ show_summary() {
     ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
     ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+')
     SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
-    
+
     clear
     echo -e "${green}"
     echo "  ╭─────────────────────────────────────────╮"
@@ -244,14 +238,14 @@ show_summary() {
     echo "  │                                         │"
     echo "  ╰─────────────────────────────────────────╯"
     echo -e "${plain}"
-    
+
     echo -e "${cyan}┌ Credentials${plain}"
     echo -e "${cyan}│${plain}"
     echo -e "${cyan}│${plain}  Username    ${green}${XUI_USERNAME}${plain}"
     echo -e "${cyan}│${plain}  Password    ${green}${XUI_PASSWORD}${plain}"
     echo -e "${cyan}│${plain}"
     echo -e "${cyan}└${plain}"
-    
+
     echo -e "\n${cyan}┌ Access URLs${plain}"
     echo -e "${cyan}│${plain}"
     echo -e "${cyan}│${plain}  Panel (HTTPS)    ${blue}https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}${plain}"
@@ -260,10 +254,10 @@ show_summary() {
     echo -e "${cyan}│${plain}  Subscription     ${blue}https://${SUB_DOMAIN}:8443/${plain}"
     echo -e "${cyan}│${plain}"
     echo -e "${cyan}└${plain}"
-    
+
     echo -e "\n${yellow}⚠  Panel is not secure with SSL certificate${plain}"
     echo -e "${yellow}   Configure SSL in panel settings for production${plain}"
-    
+
     echo -e "\n${green}✓ Ready to use!${plain}\n"
 }
 
