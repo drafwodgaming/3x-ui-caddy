@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.1
+#UPDATE 2.19
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -268,10 +268,10 @@ show_summary() {
     echo -e "${cyan}│${plain}"
     
     if [[ "$USE_CADDY" == "true" ]]; then
-        echo -e "${cyan}│  Panel (HTTPS)    ${blue}https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}${plain}"
-        echo -e "${cyan}│  Subscription     ${blue}https://${SUB_DOMAIN}:8443/${plain}"
+        echo -e "${cyan}│${plain}  Panel (HTTPS)    ${blue}https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
+        echo -e "${cyan}│${plain}  Subscription     ${blue}https://${SUB_DOMAIN}:8443/"
     else
-        echo -e "${cyan}│  Panel (Direct)   ${blue}http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}${plain}"
+        echo -e "${cyan}│${plain}  Panel (Direct)   ${blue}http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
     fi
     
     echo -e "${cyan}│${plain}"
