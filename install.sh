@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.12
+#UPDATE 2.1
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -390,57 +390,78 @@ create_vless_reality_inbound() {
     
     SHORT_ID=$(openssl rand -hex 8)
 
-    # --- Создание JSON-полезной нагрузки одним махом с помощью jq ---
-    # Фильтр @json гарантирует корректное преобразование объекта в строку
+    # --- Создание JSON-полезной нагрузки с PUBLIC KEY ---
     local inbound_json
     inbound_json=$(jq -n \
-    --arg port "$REALITY_PORT" \
-    --arg uuid "$CLIENT_UUID" \
-    --arg email "$CLIENT_EMAIL" \
-    --arg dest "$REALITY_DEST" \
-    --arg sni "$REALITY_SNI" \
-    --arg privkey "$REALITY_PRIVATE_KEY" \
-    --arg pubkey "$REALITY_PUBLIC_KEY" \
-    --arg shortid "$SHORT_ID" \
-    --arg remark "VLESS-Reality-Vision" \
-    '{
-        enable: true,
-        port: ($port | tonumber),
-        protocol: "vless",
-        settings: {
-            clients: [{ id: $uuid, flow: "xtls-rprx-vision", email: $email, limitIp: 0, totalGB: 0, expiryTime: 0, enable: true, tgId: "", subId: "" }],
-            decryption: "none",
-            fallbacks: []
-        },
-        streamSettings: {
-            network: "tcp",
-            security: "reality",
-            realitySettings: {
-                show: false,
-                dest: $dest,
-                xver: 0,
-                serverNames: [$sni],
-                privateKey: $privkey,
-                publicKey: $pubkey,
-                minClientVer: "",
-                maxClientVer: "",
-                maxTimeDiff: 0,
-                shortIds: [$shortid]
-            },
-            tcpSettings: { acceptProxyProtocol: false, header: { type: "none" } }
-        },
-        sniffing: {
-            enabled: true,
-            destOverride: ["http", "tls", "quic", "fakedns"],
-            metadataOnly: false,
-            routeOnly: false
-        },
-        remark: $remark,
-        listen: "",
-        allocate: { strategy: "always", refresh: 5, concurrency: 3 }
-    }'
-)
-
+        --argjson port "$REALITY_PORT" \
+        --arg uuid "$CLIENT_UUID" \
+        --arg email "$CLIENT_EMAIL" \
+        --arg dest "$REALITY_DEST" \
+        --arg sni "$REALITY_SNI" \
+        --arg privkey "$REALITY_PRIVATE_KEY" \
+        --arg pubkey "$REALITY_PUBLIC_KEY" \
+        --arg shortid "$SHORT_ID" \
+        --arg remark "VLESS-Reality-Vision" \
+        '{
+            enable: true,
+            port: $port,
+            protocol: "vless",
+            settings: (
+                {
+                    clients: [{ 
+                        id: $uuid, 
+                        flow: "xtls-rprx-vision", 
+                        email: $email, 
+                        limitIp: 0, 
+                        totalGB: 0, 
+                        expiryTime: 0, 
+                        enable: true, 
+                        tgId: "", 
+                        subId: "" 
+                    }],
+                    decryption: "none",
+                    fallbacks: []
+                } | @json
+            ),
+            streamSettings: (
+                {
+                    network: "tcp",
+                    security: "reality",
+                    realitySettings: {
+                        show: false,
+                        dest: $dest,
+                        xver: 0,
+                        serverNames: [$sni],
+                        privateKey: $privkey,
+                        publicKey: $pubkey,
+                        minClientVer: "",
+                        maxClientVer: "",
+                        maxTimeDiff: 0,
+                        shortIds: [$shortid]
+                    },
+                    tcpSettings: { 
+                        acceptProxyProtocol: false, 
+                        header: { type: "none" } 
+                    }
+                } | @json
+            ),
+            sniffing: (
+                {
+                    enabled: true,
+                    destOverride: ["http", "tls", "quic", "fakedns"],
+                    metadataOnly: false,
+                    routeOnly: false
+                } | @json
+            ),
+            remark: $remark,
+            listen: "",
+            allocate: { 
+                strategy: "always", 
+                refresh: 5, 
+                concurrency: 3 
+            }
+        }'
+    )
 
     # --- Отладочная информация ---
     echo -e "${yellow}→${plain} Payload to be sent to API:"
