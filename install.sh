@@ -207,16 +207,28 @@ EOF
 
 # --- API Login ---
 api_login() {
-    local response=$(curl -s -X POST "http://127.0.0.1:${PANEL_PORT}/login" \
-        -H "Content-Type: application/json" \
-        -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" \
-        -c /tmp/x-ui-cookie.txt)
+    local max_attempts=10
+    local attempt=1
     
-    if echo "$response" | grep -q "success"; then
-        return 0
-    else
-        return 1
-    fi
+    while [ $attempt -le $max_attempts ]; do
+        local response=$(curl -s -X POST "http://127.0.0.1:${PANEL_PORT}${config_webBasePath}/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" \
+            -c /tmp/x-ui-cookie.txt)
+        
+        if echo "$response" | grep -q "success"; then
+            echo -e "${green}✓${plain} API login successful"
+            return 0
+        fi
+        
+        echo -e "${yellow}⟳${plain} Waiting for panel... (attempt $attempt/$max_attempts)"
+        sleep 3
+        ((attempt++))
+    done
+    
+    echo -e "${red}✗ API login failed after $max_attempts attempts${plain}"
+    echo -e "${red}Response: $response${plain}"
+    return 1
 }
 
 # --- Add VLESS Reality Inbound ---
@@ -228,7 +240,7 @@ add_vless_reality() {
     
     # Login to get session
     if ! api_login; then
-        echo -e "${red}✗ API login failed${plain}"
+        echo -e "${red}✗ Failed to login to API${plain}"
         return 1
     fi
     
@@ -256,7 +268,7 @@ EOF
 )
     
     # Add inbound via API
-    local response=$(curl -s -X POST "http://127.0.0.1:${PANEL_PORT}/panel/api/inbounds/add" \
+    local response=$(curl -s -X POST "http://127.0.0.1:${PANEL_PORT}${config_webBasePath}/panel/api/inbounds/add" \
         -H "Content-Type: application/json" \
         -b /tmp/x-ui-cookie.txt \
         -d "$inbound_json")
