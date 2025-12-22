@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.12
+#UPDATE 2.1
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -17,7 +17,7 @@ if [[ -f /etc/os-release ]]; then
     source /etc/os-release
     release=$ID
 elif [[ -f /usr/lib/os-release ]]; then
-    source /usr/lib/os-release
+    source /usr/lib/oas-release
     release=$ID
 else
     echo -e "${red}✗ Failed to detect OS${plain}"
@@ -35,38 +35,6 @@ arch() {
         s390x) echo 's390x' ;;
         *) echo -e "${red}✗ Unsupported architecture${plain}" && exit 1 ;;
     esac
-}
-
-# Function to sanitize input by removing special characters and extra spaces
-sanitize_input() {
-    local input="$1"
-    # Remove leading/trailing spaces
-    input=$(echo "$input" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    # Replace multiple spaces with single space
-    input=$(echo "$input" | tr -s ' ')
-    # Remove special characters except for hyphens, periods, and underscores
-    input=$(echo "$input" | sed 's/[^a-zA-Z0-9._-]//g')
-    echo "$input"
-}
-
-# Function to sanitize domain name
-sanitize_domain() {
-    local input="$1"
-    # Remove leading/trailing spaces
-    input=$(echo "$input" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    # Convert to lowercase
-    input=$(echo "$input" | tr '[:upper:]' '[:lower:]')
-    # Remove protocol prefix if present
-    input=$(echo "$input" | sed 's/^https\?:\/\///')
-    # Remove path after domain
-    input=$(echo "$input" | sed 's/\/.*$//')
-    # Remove special characters except for hyphens and periods
-    input=$(echo "$input" | sed 's/[^a-z0-9.-]//g')
-    # Remove consecutive periods
-    input=$(echo "$input" | sed 's/\.\./\./g')
-    # Remove leading/trailing periods
-    input=$(echo "$input" | sed 's/^\.//;s/\.$//')
-    echo "$input"
 }
 
 print_banner() {
@@ -88,18 +56,11 @@ read_credentials() {
 
     if [[ -z "$XUI_USERNAME" ]]; then
         XUI_USERNAME=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 10 | head -n 1)
-    else
-        XUI_USERNAME=$(sanitize_input "$XUI_USERNAME")
     fi
-    
     if [[ -z "$XUI_PASSWORD" ]]; then
         length=$((20 + RANDOM % 11))
         XUI_PASSWORD=$(LC_ALL=C tr -dc 'a-zA-Z0-9!@#$%^&*()_+-=' </dev/urandom | fold -w $length | head -n 1)
-    else
-        # For password, we'll keep special characters but remove control characters
-        XUI_PASSWORD=$(echo "$XUI_PASSWORD" | tr -d '\000-\010\013\014\016-\037\177-\377')
     fi
-    
     echo -e "${cyan}│ Username:${green} $XUI_USERNAME ${cyan}Password:${green} $XUI_PASSWORD${plain}"
     echo -e "${blue}└${plain}"
 }
@@ -110,22 +71,14 @@ read_parameters() {
     echo -e "${blue}│${plain}"
     read -rp "$(echo -e ${blue}│${plain}) Panel port [8080]: " PANEL_PORT
     PANEL_PORT=${PANEL_PORT:-8080}
-    # Sanitize port - keep only digits
-    PANEL_PORT=$(echo "$PANEL_PORT" | sed 's/[^0-9]//g')
     
     read -rp "$(echo -e ${blue}│${plain}) Subscription port [2096]: " SUB_PORT
     SUB_PORT=${SUB_PORT:-2096}
-    # Sanitize port - keep only digits
-    SUB_PORT=$(echo "$SUB_PORT" | sed 's/[^0-9]//g')
     
     # Only ask for domains if using Caddy
     if [[ "$USE_CADDY" == "true" ]]; then
         read -rp "$(echo -e ${blue}│${plain}) Panel domain: " PANEL_DOMAIN
         read -rp "$(echo -e ${blue}│${plain}) Subscription domain: " SUB_DOMAIN
-        
-        # Sanitize domains
-        PANEL_DOMAIN=$(sanitize_domain "$PANEL_DOMAIN")
-        SUB_DOMAIN=$(sanitize_domain "$SUB_DOMAIN")
     fi
     echo -e "${blue}│${plain}"
     echo -e "${blue}└${plain}"
@@ -230,8 +183,6 @@ install_3xui() {
     chmod +x /usr/bin/x-ui
     
     config_webBasePath=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 18 | head -n 1)
-    # Add a leading slash to ensure proper URL formatting
-    config_webBasePath="/${config_webBasePath}"
     
     /usr/local/x-ui/x-ui setting -username "${XUI_USERNAME}" -password "${XUI_PASSWORD}" \
         -port "${PANEL_PORT}" -webBasePath "${config_webBasePath}" >/dev/null 2>&1
@@ -269,10 +220,6 @@ install_caddy() {
 configure_caddy() {
     echo -e "${yellow}→${plain} Configuring reverse proxy..."
     
-    # Ensure domains are properly sanitized
-    PANEL_DOMAIN=$(sanitize_domain "$PANEL_DOMAIN")
-    SUB_DOMAIN=$(sanitize_domain "$SUB_DOMAIN")
-    
     cat > /etc/caddy/Caddyfile <<EOF
  $PANEL_DOMAIN:8443 {
     encode gzip
@@ -292,14 +239,13 @@ EOF
     echo -e "${green}✓${plain} Caddy configured"
 }
 
+
 # --- Show summary ---
 show_summary() {
     sleep 2
     PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>/dev/null)
     ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
     ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+')
-    # Ensure webBasePath starts with a slash
-    [[ "$ACTUAL_WEBBASE" != /* ]] && ACTUAL_WEBBASE="/${ACTUAL_WEBBASE}"
     SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
     
     clear
@@ -322,20 +268,10 @@ show_summary() {
     echo -e "${cyan}│${plain}"
     
     if [[ "$USE_CADDY" == "true" ]]; then
-        # Ensure domains are properly sanitized
-        PANEL_DOMAIN=$(sanitize_domain "$PANEL_DOMAIN")
-        SUB_DOMAIN=$(sanitize_domain "$SUB_DOMAIN")
-        
-        # Create clean URLs without color codes to avoid formatting issues
-        PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
-        SUB_URL="https://${SUB_DOMAIN}:8443/"
-        
-        # Display URLs without color codes to avoid formatting issues
-        echo -e "${cyan}│${plain}  Panel (HTTPS)    ${PANEL_URL}"
-        echo -e "${cyan}│${plain}  Subscription     ${SUB_URL}"
+        echo -e "${cyan}│  Panel (HTTPS)    ${blue}https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}${plain}"
+        echo -e "${cyan}│  Subscription     ${blue}https://${SUB_DOMAIN}:8443/${plain}"
     else
-        PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
-        echo -e "${cyan}│${plain}  Panel (Direct)   ${PANEL_URL}"
+        echo -e "${cyan}│  Panel (Direct)   ${blue}http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}${plain}"
     fi
     
     echo -e "${cyan}│${plain}"
@@ -350,16 +286,8 @@ show_summary() {
 api_login() {
     echo -e "${yellow}→${plain} Authenticating..."
     
-    # Get the panel info to ensure we have the correct webBasePath
-    PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>/dev/null)
-    ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
-    ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+')
-    # Ensure webBasePath starts with a slash
-    [[ "$ACTUAL_WEBBASE" != /* ]] && ACTUAL_WEBBASE="/${ACTUAL_WEBBASE}"
-    
     # Determine the panel URL based on whether Caddy is used
     if [[ "$USE_CADDY" == "true" ]]; then
-        PANEL_DOMAIN=$(sanitize_domain "$PANEL_DOMAIN")
         PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
     else
         SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
@@ -367,7 +295,7 @@ api_login() {
     fi
     
     local response=$(curl -k -s -c /tmp/xui_cookies.txt -X POST \
-        "${PANEL_URL}/login" \
+        "${PANEL_URL}login" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
         -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" 2>/dev/null)
@@ -385,7 +313,6 @@ api_login() {
 generate_uuid() {
     # Determine the panel URL based on whether Caddy is used
     if [[ "$USE_CADDY" == "true" ]]; then
-        PANEL_DOMAIN=$(sanitize_domain "$PANEL_DOMAIN")
         PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
     else
         SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
@@ -393,7 +320,7 @@ generate_uuid() {
     fi
     
     local response=$(curl -k -s -b /tmp/xui_cookies.txt \
-        "${PANEL_URL}/panel/api/server/getNewUUID" 2>/dev/null)
+        "${PANEL_URL}panel/api/server/getNewUUID" 2>/dev/null)
     
     # Fix: Extract just the UUID value, not the entire object
     local uuid=$(echo "$response" | jq -r '.obj.uuid // empty' 2>/dev/null)
@@ -408,7 +335,6 @@ generate_uuid() {
 generate_reality_keys() {
     # Determine the panel URL based on whether Caddy is used
     if [[ "$USE_CADDY" == "true" ]]; then
-        PANEL_DOMAIN=$(sanitize_domain "$PANEL_DOMAIN")
         PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
     else
         SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
@@ -416,7 +342,7 @@ generate_reality_keys() {
     fi
     
     local response=$(curl -k -s -b /tmp/xui_cookies.txt \
-        "${PANEL_URL}/panel/api/server/getNewX25519Cert" 2>/dev/null)
+        "${PANEL_URL}panel/api/server/getNewX25519Cert" 2>/dev/null)
     
     REALITY_PRIVATE_KEY=$(echo "$response" | jq -r '.obj.privateKey // empty' 2>/dev/null)
     REALITY_PUBLIC_KEY=$(echo "$response" | jq -r '.obj.publicKey // empty' 2>/dev/null)
@@ -544,7 +470,6 @@ create_vless_reality_inbound() {
     
     # Определение URL панели
     if [[ "$USE_CADDY" == "true" ]]; then
-        PANEL_DOMAIN=$(sanitize_domain "$PANEL_DOMAIN")
         PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
     else
         SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
@@ -552,7 +477,7 @@ create_vless_reality_inbound() {
     fi
     
     local response=$(curl -k -s -b /tmp/xui_cookies.txt -X POST \
-        "${PANEL_URL}/panel/api/inbounds/add" \
+        "${PANEL_URL}panel/api/inbounds/add" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
         -d "$inbound_json" 2>/dev/null)
