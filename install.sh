@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.1
+#UPDATE 2.12
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -293,12 +293,11 @@ api_login() {
         PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
     fi
     
-    local response=$(curl -ks -c /tmp/xui_cookies.txt \
-  -X POST "https://drafwod-test1.duckdns.org:8443/kuGqSYQB01PNpUSm71/login" \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json" \
-  -d '{"username":"4YQIcpMtpU","password":"/KWlZ5@TuAGonz(MW<FejP<^Wa.36"}'
-  2>/dev/null)
+    local response=$(curl -k -s -c /tmp/xui_cookies.txt -X POST \
+        "${PANEL_URL}login" \
+        -H "Content-Type: application/json" \
+        -H "Accept: application/json" \
+        -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" 2>/dev/null)
     
     if echo "$response" | jq -e '.success == true' >/dev/null 2>&1; then
         echo -e "${green}✓${plain} Authentication successful"
