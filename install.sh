@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.12
+#UPDATE 2.1234
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -332,29 +332,29 @@ generate_uuid() {
     fi
 }
 
-generate_reality_keys() {
-    # Determine the panel URL based on whether Caddy is used
+generate_reality_keys_mlkem() {
+    # Определяем URL панели
     if [[ "$USE_CADDY" == "true" ]]; then
         PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
     else
         SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
         PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
     fi
+
+    # GET запрос к /getNewmlkem768
+    local response=$(curl -k -s -b /tmp/xui_cookies.txt "${PANEL_URL}getNewmlkem768")
     
-    local response=$(curl -k -s -b /tmp/xui_cookies.txt \
-        "${PANEL_URL}panel/api/server/getNewX25519Cert" 2>/dev/null)
-    
-    REALITY_PRIVATE_KEY=$(echo "$response" | jq -r '.obj.privateKey // empty' 2>/dev/null)
-    REALITY_PUBLIC_KEY=$(echo "$response" | jq -r '.obj.publicKey // empty' 2>/dev/null)
-    
+    REALITY_PRIVATE_KEY=$(echo "$response" | jq -r '.obj.privateKey // empty')
+    REALITY_PUBLIC_KEY=$(echo "$response" | jq -r '.obj.publicKey // empty')
+
     if [[ -z "$REALITY_PRIVATE_KEY" || "$REALITY_PRIVATE_KEY" == "null" ]]; then
         REALITY_PRIVATE_KEY=""
     fi
-    
     if [[ -z "$REALITY_PUBLIC_KEY" || "$REALITY_PUBLIC_KEY" == "null" ]]; then
         REALITY_PUBLIC_KEY=""
     fi
 }
+
 
 create_vless_reality_inbound() {
     echo -e "${yellow}→${plain} Creating VLESS Reality inbound..."
@@ -378,8 +378,8 @@ create_vless_reality_inbound() {
     fi
     
     echo -e "${cyan}│${plain} UUID generated: $CLIENT_UUID"
-    
-    generate_reality_keys
+
+    generate_reality_keys_mlkem
     if [[ -z "$REALITY_PRIVATE_KEY" || -z "$REALITY_PUBLIC_KEY" ]]; then
         echo -e "${red}✗${plain} Failed to generate Reality keys"
         return 1
@@ -398,7 +398,6 @@ create_vless_reality_inbound() {
         --arg dest "$REALITY_DEST" \
         --arg sni "$REALITY_SNI" \
         --arg privkey "$REALITY_PRIVATE_KEY" \
-        --arg pubkey "$REALITY_PUBLIC_KEY" \
         --arg shortid "$SHORT_ID" \
         --arg remark "VLESS-Reality-Vision" \
         '{
@@ -422,7 +421,6 @@ create_vless_reality_inbound() {
                         xver: 0,
                         serverNames: [$sni],
                         privateKey: $privkey,
-                        publicKey: $pubkey,
                         minClientVer: "",
                         maxClientVer: "",
                         maxTimeDiff: 0,
