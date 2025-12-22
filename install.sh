@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.10
+#UPDATE 2.11
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -272,7 +272,7 @@ api_login() {
 generate_uuid() {
     # ИЗМЕНЕНО: Заменен ${ACTUAL_PORT} на 8443 для подключения через Caddy
     local response=$(curl -k -s -b /tmp/xui_cookies.txt \
-        "https://${PANEL_DOMAIN}:8443/${ACTUAL_WEBBASE}/panel/api/server/getNewUUID" 2>/dev/null)
+        "https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}panel/api/server/getNewUUID" 2>/dev/null)
     
     local uuid=$(echo "$response" | jq -r '.obj // empty' 2>/dev/null)
     
@@ -286,7 +286,7 @@ generate_uuid() {
 generate_reality_keys() {
     # ИЗМЕНЕНО: Заменен ${ACTUAL_PORT} на 8443 для подключения через Caddy
     local response=$(curl -k -s -b /tmp/xui_cookies.txt \
-        "https://${PANEL_DOMAIN}:8443/${ACTUAL_WEBBASE}/panel/api/server/getNewX25519Cert" 2>/dev/null)
+        "https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}panel/api/server/getNewX25519Cert" 2>/dev/null)
     
     REALITY_PRIVATE_KEY=$(echo "$response" | jq -r '.obj.privateKey // empty' 2>/dev/null)
     REALITY_PUBLIC_KEY=$(echo "$response" | jq -r '.obj.publicKey // empty' 2>/dev/null)
@@ -341,7 +341,7 @@ EOF
     # Send API request
     # ИЗМЕНЕНО: Заменен ${ACTUAL_PORT} на 8443 для подключения через Caddy
     local response=$(curl -k -s -b /tmp/xui_cookies.txt -X POST \
-        "https://${PANEL_DOMAIN}:8443/${ACTUAL_WEBBASE}/panel/api/inbounds/add" \
+        "https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}panel/api/inbounds/add" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
         -d "$inbound_json" 2>/dev/null)
