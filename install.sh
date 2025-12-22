@@ -256,35 +256,6 @@ show_summary() {
     configure_reality_inbound
 }
 
-# --- API Functions (called AFTER installation complete) ---
-wait_for_panel() {
-    echo -e "${yellow}→${plain} Waiting for panel API..."
-    local max_attempts=40
-    local attempt=0
-    
-    while [ $attempt -lt $max_attempts ]; do
-        if systemctl is-active --quiet x-ui; then
-            local http_code=$(curl -s -o /dev/null -w "%{http_code}" \
-                "http://127.0.0.1:${ACTUAL_PORT}/login" 2>/dev/null)
-            
-            if [[ "$http_code" =~ ^(200|302|401|405)$ ]]; then
-                echo -e "${green}✓${plain} Panel API ready"
-                sleep 3
-                return 0
-            fi
-        fi
-        
-        attempt=$((attempt + 1))
-        if [ $((attempt % 5)) -eq 0 ]; then
-            echo -e "${cyan}│${plain} Still waiting... ($attempt/$max_attempts)"
-        fi
-        sleep 2
-    done
-    
-    echo -e "${red}✗${plain} Panel API timeout"
-    return 1
-}
-
 api_login() {
     echo -e "${yellow}→${plain} Authenticating..."
     
@@ -429,7 +400,7 @@ EOF
 }
 
 configure_reality_inbound() {
-    if wait_for_panel; then
+    
         if api_login; then
             if create_vless_reality_inbound; then
                 echo -e "\n${green}✓ VLESS Reality inbound configured successfully!${plain}\n"
@@ -441,11 +412,6 @@ configure_reality_inbound() {
             echo -e "\n${yellow}⚠ API authentication failed${plain}"
             echo -e "${yellow}  Please create inbound manually in the panel${plain}\n"
         fi
-    else
-        echo -e "\n${yellow}⚠ Panel API not ready${plain}"
-        echo -e "${yellow}  Panel is running, but API needs more time${plain}"
-        echo -e "${yellow}  Please create inbound manually in the panel${plain}\n"
-    fi
 }
 
 # --- Main execution ---
