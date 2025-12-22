@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 1.10
+#UPDATE 2.10
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -252,43 +252,27 @@ show_summary() {
 api_login() {
     echo -e "${yellow}→${plain} Authenticating..."
     
-    local login_url="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}login"
-    echo -e "${cyan}│${plain} URL: $login_url"
-    echo -e "${cyan}│${plain} Username: $XUI_USERNAME"
-    echo -e "${cyan}│${plain} Password: $XUI_PASSWORD"
-
+    # ИЗМЕНЕНО: Заменен ${ACTUAL_PORT} на 8443 для подключения через Caddy
     local response=$(curl -k -s -c /tmp/xui_cookies.txt -X POST \
-        "$login_url" \
+        "https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}login" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
-        -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" \
-        -w "\nHTTP_CODE:%{http_code}\nTOTAL_TIME:%{time_total}" 2>/tmp/xui_curl_err.log)
+        -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" 2>/dev/null)
     
-    echo -e "${cyan}│${plain} Response:\n$response"
-    echo -e "${cyan}│${plain} Curl stderr logged to /tmp/xui_curl_err.log"
-
-    http_code=$(echo "$response" | grep "HTTP_CODE" | cut -d: -f2)
-    if [[ "$http_code" != "200" ]]; then
-        echo -e "${red}✗${plain} HTTP code: $http_code"
-        echo -e "${red}✗${plain} Authentication failed (HTTP error)"
-        return 1
-    fi
-
     if echo "$response" | jq -e '.success == true' >/dev/null 2>&1; then
         echo -e "${green}✓${plain} Authentication successful"
         return 0
     else
-        echo -e "${red}✗${plain} Authentication failed (API response)"
-        echo "Full response: $response"
+        echo -e "${red}✗${plain} Authentication failed"
+        echo "Response was: $response" # Добавим вывод ответа для отладки
         return 1
     fi
 }
 
-
 generate_uuid() {
     # ИЗМЕНЕНО: Заменен ${ACTUAL_PORT} на 8443 для подключения через Caddy
     local response=$(curl -k -s -b /tmp/xui_cookies.txt \
-        "https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}panel/api/server/getNewUUID" 2>/dev/null)
+        "https://${PANEL_DOMAIN}:8443/${ACTUAL_WEBBASE}/panel/api/server/getNewUUID" 2>/dev/null)
     
     local uuid=$(echo "$response" | jq -r '.obj // empty' 2>/dev/null)
     
@@ -302,7 +286,7 @@ generate_uuid() {
 generate_reality_keys() {
     # ИЗМЕНЕНО: Заменен ${ACTUAL_PORT} на 8443 для подключения через Caddy
     local response=$(curl -k -s -b /tmp/xui_cookies.txt \
-        "https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}panel/api/server/getNewX25519Cert" 2>/dev/null)
+        "https://${PANEL_DOMAIN}:8443/${ACTUAL_WEBBASE}/panel/api/server/getNewX25519Cert" 2>/dev/null)
     
     REALITY_PRIVATE_KEY=$(echo "$response" | jq -r '.obj.privateKey // empty' 2>/dev/null)
     REALITY_PUBLIC_KEY=$(echo "$response" | jq -r '.obj.publicKey // empty' 2>/dev/null)
@@ -357,7 +341,7 @@ EOF
     # Send API request
     # ИЗМЕНЕНО: Заменен ${ACTUAL_PORT} на 8443 для подключения через Caddy
     local response=$(curl -k -s -b /tmp/xui_cookies.txt -X POST \
-        "https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}panel/api/inbounds/add" \
+        "https://${PANEL_DOMAIN}:8443/${ACTUAL_WEBBASE}/panel/api/inbounds/add" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
         -d "$inbound_json" 2>/dev/null)
