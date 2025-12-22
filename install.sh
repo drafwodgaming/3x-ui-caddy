@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.123
+#UPDATE 2.12
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -380,19 +380,17 @@ create_vless_reality_inbound() {
     echo -e "${cyan}│${plain} UUID generated: $CLIENT_UUID"
     
     generate_reality_keys
-    if [[ -z "$REALITY_PRIVATE_KEY" || -z "$REALITY_PUBLIC_KEY" ]]; then
-        echo -e "${red}✗${plain} Failed to generate Reality keys"
+    if [[ -z "$REALITY_PRIVATE_KEY" ]]; then
+        echo -e "${red}✗${plain} Failed to generate Reality private key"
         return 1
     fi
-    echo -e "${cyan}│${plain} Reality keys generated"
+    echo -e "${cyan}│${plain} Reality private key generated"
     
     SHORT_ID=$(openssl rand -hex 8)
 
-    # --- Создание JSON-полезной нагрузки одним махом с помощью jq ---
-    # Фильтр @json гарантирует корректное преобразование объекта в строку
-    local inbound_json
+    # --- Создание JSON-полезной нагрузки без @json ---
     inbound_json=$(jq -n \
-        --argjson port "$REALITY_PORT" \
+        --arg port "$REALITY_PORT" \
         --arg uuid "$CLIENT_UUID" \
         --arg email "$CLIENT_EMAIL" \
         --arg dest "$REALITY_DEST" \
@@ -402,52 +400,41 @@ create_vless_reality_inbound() {
         --arg remark "VLESS-Reality-Vision" \
         '{
             enable: true,
-            port: $port,
+            port: ($port|tonumber),
             protocol: "vless",
-            settings: (
-                {
-                    clients: [{ id: $uuid, flow: "xtls-rprx-vision", email: $email, limitIp: 0, totalGB: 0, expiryTime: 0, enable: true, tgId: "", subId: "" }],
-                    decryption: "none",
-                    fallbacks: []
-                } | @json
-            ),
-            streamSettings: (
-                {
-                    network: "tcp",
-                    security: "reality",
-                    realitySettings: {
-                        show: false,
-                        dest: $dest,
-                        xver: 0,
-                        serverNames: [$sni],
-                        privateKey: $privkey,
-                        minClientVer: "",
-                        maxClientVer: "",
-                        maxTimeDiff: 0,
-                        shortIds: [$shortid]
-                    },
-                    tcpSettings: { acceptProxyProtocol: false, header: { type: "none" } }
-                }
-            ),
-            sniffing: (
-                {
-                    enabled: true,
-                    destOverride: ["http", "tls", "quic", "fakedns"],
-                    metadataOnly: false,
-                    routeOnly: false
-                } | @json
-            ),
+            settings: {
+                clients: [{ id: $uuid, flow: "xtls-rprx-vision", email: $email, limitIp: 0, totalGB: 0, expiryTime: 0, enable: true, tgId: "", subId: "" }],
+                decryption: "none",
+                fallbacks: []
+            },
+            streamSettings: {
+                network: "tcp",
+                security: "reality",
+                realitySettings: {
+                    show: false,
+                    dest: $dest,
+                    xver: 0,
+                    serverNames: [$sni],
+                    privateKey: $privkey,
+                    minClientVer: "",
+                    maxClientVer: "",
+                    maxTimeDiff: 0,
+                    shortIds: [$shortid]
+                },
+                tcpSettings: { acceptProxyProtocol: false, header: { type: "none" } }
+            },
+            sniffing: {
+                enabled: true,
+                destOverride: ["http", "tls", "quic", "fakedns"],
+                metadataOnly: false,
+                routeOnly: false
+            },
             remark: $remark,
             listen: "",
             allocate: { strategy: "always", refresh: 5, concurrency: 3 }
         }'
     )
 
-    # --- Отладочная информация ---
-    echo -e "${yellow}→${plain} Payload to be sent to API:"
-    echo "$inbound_json" | jq .
-    echo -e "${blue}└${plain}"
-    
     # Определение URL панели
     if [[ "$USE_CADDY" == "true" ]]; then
         PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
@@ -455,21 +442,35 @@ create_vless_reality_inbound() {
         SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
         PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
     fi
-    
-    local response=$(curl -k -s -b /tmp/xui_cookies.txt -X POST \
+
+    # --- Отправка запроса ---
+    response=$(curl -k -s -b /tmp/xui_cookies.txt -X POST \
         "${PANEL_URL}panel/api/inbounds/add" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
-        -d "$inbound_json" 2>/dev/null)
+        -d "$inbound_json")
 
-    echo -e "${yellow}→${plain} API Response:"
-    echo "$response" | jq .
-    echo -e "${blue}└${plain}"
-    
-    if echo "$response" | jq -e '.success == true' >/dev/null 2>&1; then
-        echo -e "${green}✓${plain} VLESS Reality inbound created"
-        
-        cat > /root/vless_reality_config.txt <<EOF
+    if ! echo "$response" | jq -e '.success == true' >/dev/null 2>&1; then
+        echo -e "${red}✗${plain} Failed to create inbound"
+        echo "Response: $response"
+        return 1
+    fi
+
+    # --- Получение ID созданного inbound ---
+    INBOUND_ID=$(echo "$response" | jq -r '.obj.id')
+
+    # --- Подтягиваем publicKey после создания inbound ---
+    REALITY_PUBLIC_KEY=$(curl -k -s -b /tmp/xui_cookies.txt \
+        "${PANEL_URL}panel/api/inbounds/list" \
+        | jq -r ".obj[] | select(.id==\"$INBOUND_ID\") | .streamSettings.realitySettings.publicKey")
+
+    if [[ -z "$REALITY_PUBLIC_KEY" || "$REALITY_PUBLIC_KEY" == "null" ]]; then
+        echo -e "${red}✗${plain} Failed to fetch public key from panel"
+        return 1
+    fi
+
+    # --- Создание локального конфигурационного файла ---
+    cat > /root/vless_reality_config.txt <<EOF
 ═══════════════════════════════════════════════════
 VLESS Reality Configuration
 ═══════════════════════════════════════════════════
@@ -494,28 +495,11 @@ Client Email: ${CLIENT_EMAIL}
 Configuration saved to: /root/vless_reality_config.txt
 ═══════════════════════════════════════════════════
 EOF
-        
-        echo ""
-        echo -e "${cyan}┌ VLESS Reality Configuration${plain}"
-        echo -e "${cyan}│${plain}"
-        echo -e "${cyan}│${plain}  Port             ${green}${REALITY_PORT}${plain}"
-        echo -e "${cyan}│${plain}  UUID             ${green}${CLIENT_UUID}${plain}"
-        echo -e "${cyan}│${plain}  Flow             ${green}xtls-rprx-vision${plain}"
-        echo -e "${cyan}│${plain}  Public Key       ${green}${REALITY_PUBLIC_KEY}${plain}"
-        echo -e "${cyan}│${plain}  Short ID         ${green}${SHORT_ID}${plain}"
-        echo -e "${cyan}│${plain}  SNI              ${green}${REALITY_SNI}${plain}"
-        echo -e "${cyan}│${plain}"
-        echo -e "${cyan}│${plain}  ${yellow}Config: /root/vless_reality_config.txt${plain}"
-        echo -e "${cyan}│${plain}"
-        echo -e "${cyan}└${plain}"
-        
-        return 0
-    else
-        echo -e "${red}✗${plain} Failed to create inbound"
-        echo "Response was: $response"
-        return 1
-    fi
+
+    echo -e "${green}✓${plain} VLESS Reality inbound created successfully"
+    return 0
 }
+
 
 configure_reality_inbound() {
     echo -e "\n${magenta}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${plain}"
