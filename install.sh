@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#UPDATE 2.1234
+#UPDATE 2.1
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -333,7 +333,6 @@ generate_uuid() {
 }
 
 generate_reality_keys_mlkem() {
-    # Определяем URL панели
     if [[ "$USE_CADDY" == "true" ]]; then
         PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
     else
@@ -341,19 +340,22 @@ generate_reality_keys_mlkem() {
         PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
     fi
 
-    # GET запрос к /getNewmlkem768
-    local response=$(curl -k -s -b /tmp/xui_cookies.txt "${PANEL_URL}getNewmlkem768")
-    
+    local response
+    response=$(curl -k -s -b /tmp/xui_cookies.txt "${PANEL_URL}panel/api/server/getNewmlkem768")
+
+    echo -e "${yellow}→${plain} Reality API response (debug): $response"
+
     REALITY_PRIVATE_KEY=$(echo "$response" | jq -r '.obj.privateKey // empty')
     REALITY_PUBLIC_KEY=$(echo "$response" | jq -r '.obj.publicKey // empty')
 
-    if [[ -z "$REALITY_PRIVATE_KEY" || "$REALITY_PRIVATE_KEY" == "null" ]]; then
-        REALITY_PRIVATE_KEY=""
+    if [[ -z "$REALITY_PRIVATE_KEY" || -z "$REALITY_PUBLIC_KEY" ]]; then
+        echo -e "${red}✗${plain} Failed to parse Reality keys from API"
+        return 1
     fi
-    if [[ -z "$REALITY_PUBLIC_KEY" || "$REALITY_PUBLIC_KEY" == "null" ]]; then
-        REALITY_PUBLIC_KEY=""
-    fi
+
+    echo -e "${green}✓${plain} Reality keys generated (ML-KEM-768)"
 }
+
 
 
 create_vless_reality_inbound() {
