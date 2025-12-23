@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#
+####
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -91,7 +91,7 @@ show_welcome() {
 }
 
 trim_spaces() {
-    echo "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+    echo "$1" | sed 's/[[:space:]]//g'
 }
 
 # Configuration form
@@ -470,9 +470,8 @@ main() {
     show_config_form
 
     for var in XUI_USERNAME XUI_PASSWORD PANEL_PORT SUB_PORT PANEL_DOMAIN SUB_DOMAIN; do
-        declare "$var=$(trim "${!var}")"
+        eval "$var=\"\$(trim_spaces \"\${$var}\")\""
     done
-
 
     
     install_base
