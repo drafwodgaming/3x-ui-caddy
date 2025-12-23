@@ -1,5 +1,5 @@
 #!/bin/bash
-#
+
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -262,21 +262,24 @@ check_config() {
         server_ip=$(curl -s --max-time 3 https://4.ident.me)
     fi
 
-    # Check if Caddy is installed and configured
+    # Check if Caddy is installed and configured as a reverse proxy for the panel
     local caddy_configured=false
     local panel_domain=""
     
     if [[ -f /etc/caddy/Caddyfile ]]; then
-        # Extract domain from Caddyfile
-        panel_domain=$(grep -E "^[^#]*:8443" /etc/caddy/Caddyfile | head -1 | awk '{print $1}' | sed 's/:8443//')
+        # Extract the domain from Caddyfile by finding the line that proxies to the panel's port
+        panel_domain=$(grep -E "reverse_proxy 127.0.0.1:${existing_port}" /etc/caddy/Caddyfile | head -1 | awk '{print $1}' | sed 's/:8443//')
         if [[ -n "$panel_domain" ]]; then
             caddy_configured=true
         fi
     fi
 
     if [[ "$caddy_configured" == "true" ]]; then
+        # Caddy is configured, show the secure URL via Caddy
+        echo -e "${green}Panel is accessible via Caddy reverse proxy with SSL.${plain}"
         echo -e "${green}Access URL (via Caddy): https://${panel_domain}:8443${existing_webBasePath}${plain}"
     elif [[ -n "$existing_cert" ]]; then
+        # Caddy is not configured, but x-ui has its own SSL cert
         local domain=$(basename "$(dirname "$existing_cert")")
         if [[ "$domain" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
             echo -e "${green}Access URL (SSL): https://${domain}:${existing_port}${existing_webBasePath}${plain}"
@@ -284,6 +287,8 @@ check_config() {
             echo -e "${green}Access URL (SSL): https://${server_ip}:${existing_port}${existing_webBasePath}${plain}"
         fi
     else
+        # Neither Caddy nor x-ui SSL is configured
+        echo -e "${yellow}Warning: Panel is not secure with SSL.${plain}"
         echo -e "${green}Access URL (HTTP): http://${server_ip}:${existing_port}${existing_webBasePath}${plain}"
     fi
 }
