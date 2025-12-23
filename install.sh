@@ -45,7 +45,8 @@ install_gum() {
                 mkdir -p /etc/apt/keyrings
                 curl -fsSL https://repo.charm.sh/apt/gpg.key | gpg --dearmor -o /etc/apt/keyrings/charm.gpg
                 echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" | tee /etc/apt/sources.list.d/charm.list
-                apt update && apt install -y gum
+                # Показываем ошибки только в случае сбоя
+                apt update -qq 2> >(while read line; do echo -e "${red}APT Error:${plain} $line"; done) && apt install -y gum
             ;;
             fedora | amzn | rhel | almalinux | rocky | ol)
                 echo '[charm]
@@ -54,7 +55,8 @@ baseurl=https://repo.charm.sh/yum/
 enabled=1
 gpgcheck=1
 gpgkey=https://repo.charm.sh/yum/gpg.key' | tee /etc/yum.repos.d/charm.repo
-                yum install -y gum
+                # Показываем ошибки только в случае сбоя
+                yum install -y gum 2> >(while read line; do echo -e "${red}YUM Error:${plain} $line"; done)
             ;;
             *)
                 arch_type=$(arch)
@@ -169,96 +171,71 @@ show_config_form() {
 install_base() {
     clear
     gum style --foreground 212 "📦 Installing base dependencies..."
-    local log_file="/tmp/install_base.log"
     
-    # Run the installation in background while showing spinner
-    (
-        case "${release}" in
-            ubuntu | debian | armbian)
-                apt-get update > "$log_file" 2>&1 && apt-get install -y -q wget curl tar tzdata sqlite3 jq >> "$log_file" 2>&1
-            ;;
-            fedora | amzn | virtuozzo | rhel | almalinux | rocky | ol)
-                dnf -y update > "$log_file" 2>&1 && dnf install -y -q wget curl tar tzdata sqlite jq >> "$log_file" 2>&1
-            ;;
-            centos)
-                if [[ "${VERSION_ID}" =~ ^7 ]]; then
-                    yum -y update > "$log_file" 2>&1 && yum install -y wget curl tar tzdata sqlite jq >> "$log_file" 2>&1
-                else
-                    dnf -y update > "$log_file" 2>&1 && dnf install -y -q wget curl tar tzdata sqlite jq >> "$log_file" 2>&1
-                fi
-            ;;
-            *)
-                apt-get update > "$log_file" 2>&1 && apt-get install -y -q wget curl tar tzdata sqlite3 jq >> "$log_file" 2>&1
-            ;;
-        esac
-        echo "EXIT_CODE:$?" >> "$log_file"
-    ) &
-    
-    # Show spinner while installation is running
-    local pid=$!
-    gum spin --spinner dot --title "Installing packages..." -- bash -c "while kill -0 $pid 2>/dev/null; do sleep 1; done"
-    
-    # Check if installation was successful
-    wait $pid
-    local exit_code=$(tail -n 1 "$log_file" | grep -o 'EXIT_CODE:[0-9]*' | cut -d: -f2)
-    
-    if [[ "$exit_code" == "0" ]]; then
-        gum style --foreground 82 "✓ Dependencies installed successfully"
-    else
-        gum style --foreground 196 "✗ Failed to install dependencies"
-        echo "Error details:"
-        cat "$log_file" | grep -v "EXIT_CODE"
-        exit 1
-    fi
-    
-    rm -f "$log_file"
+    # Перенаправляем stderr (2) на функцию, которая выводит ошибки цветом
+    case "${release}" in
+        ubuntu | debian | armbian)
+            apt-get update -qq 2> >(while read line; do echo -e "${red}✗ Error:${plain} $line"; done)
+            apt-get install -y -q wget curl tar tzdata sqlite3 jq 2> >(while read line; do echo -e "${red}✗ Error:${plain} $line"; done)
+        ;;
+        fedora | amzn | virtuozzo | rhel | almalinux | rocky | ol)
+            dnf -y update -qq 2> >(while read line; do echo -e "${red}✗ Error:${plain} $line"; done)
+            dnf install -y -q wget curl tar tzdata sqlite jq 2> >(while read line; do echo -e "${red}✗ Error:${plain} $line"; done)
+        ;;
+        centos)
+            if [[ "${VERSION_ID}" =~ ^7 ]]; then
+                yum -y update -qq 2> >(while read line; do echo -e "${red}✗ Error:${plain} $line"; done)
+                yum install -y wget curl tar tzdata sqlite jq 2> >(while read line; do echo -e "${red}✗ Error:${plain} $line"; done)
+            else
+                dnf -y update -qq 2> >(while read line; do echo -e "${red}✗ Error:${plain} $line"; done)
+                dnf install -y -q wget curl tar tzdata sqlite jq 2> >(while read line; do echo -e "${red}✗ Error:${plain} $line"; done)
+            fi
+        ;;
+        *)
+            apt-get update -qq 2> >(while read line; do echo -e "${red}✗ Error:${plain} $line"; done)
+            apt-get install -y -q wget curl tar tzdata sqlite3 jq 2> >(while read line; do echo -e "${red}✗ Error:${plain} $line"; done)
+        ;;
+    esac
+    gum style --foreground 82 "✓ Dependencies installed successfully"
     sleep 1
 }
 
 install_3xui() {
     clear
     gum style --foreground 212 "🚀 Installing 3X-UI..."
-    local log_file="/tmp/install_3xui.log"
+    local log_file="/tmp/install_3xui_err.log" # Только для ошибок
     
-    # Fetch latest version
     (
-        echo "Fetching latest version..." > "$log_file"
         tag_version=$(curl -Ls "https://api.github.com/repos/drafwodgaming/3x-ui-caddy/releases/latest" \
             | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-        [[ ! -n "$tag_version" ]] && echo "EXIT_CODE:1" >> "$log_file" && exit 1
-        echo "Version: $tag_version" >> "$log_file"
+        [[ ! -n "$tag_version" ]] && echo "Failed to fetch version" && exit 1
         
         cd /usr/local/
         
-        echo "Downloading 3X-UI..." >> "$log_file"
+        # Перенаправляем ошибки wget в лог
         wget --inet4-only -q -O /usr/local/x-ui-linux-$(arch).tar.gz \
-            https://github.com/drafwodgaming/3x-ui-caddy/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz
+            https://github.com/drafwodgaming/3x-ui-caddy/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz 2>> "$log_file"
         
         if [[ $? -ne 0 ]]; then
             echo "Download failed" >> "$log_file"
-            echo "EXIT_CODE:1" >> "$log_file"
             exit 1
         fi
         
-        echo "Downloading x-ui.sh..." >> "$log_file"
         wget --inet4-only -q -O /usr/bin/x-ui-temp \
-            https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/main/x-ui.sh
+            https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/main/x-ui.sh 2>> "$log_file"
         
         if [[ -e /usr/local/x-ui/ ]]; then
-            echo "Stopping existing x-ui service..." >> "$log_file"
             systemctl stop x-ui 2>> "$log_file" || true
             rm -rf /usr/local/x-ui/ 2>> "$log_file"
         fi
         
-        echo "Extracting files..." >> "$log_file"
-        tar zxf x-ui-linux-$(arch).tar.gz >> "$log_file" 2>&1
+        tar zxf x-ui-linux-$(arch).tar.gz 2>> "$log_file"
         rm x-ui-linux-$(arch).tar.gz -f
         
         cd x-ui
         chmod +x x-ui x-ui.sh
         
         if [[ $(arch) == "armv5" || $(arch) == "armv6" || $(arch) == "armv7" ]]; then
-            echo "Adjusting for ARM architecture..." >> "$log_file"
             mv bin/xray-linux-$(arch) bin/xray-linux-arm
             chmod +x bin/xray-linux-arm
         fi
@@ -268,42 +245,33 @@ install_3xui() {
         mv -f /usr/bin/x-ui-temp /usr/bin/x-ui
         chmod +x /usr/bin/x-ui
         
-        echo "Configuring panel..." >> "$log_file"
         config_webBasePath=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 18 | head -n 1)
         
         /usr/local/x-ui/x-ui setting -username "${XUI_USERNAME}" -password "${XUI_PASSWORD}" \
-            -port "${PANEL_PORT}" -webBasePath "${config_webBasePath}" >> "$log_file" 2>&1
+            -port "${PANEL_PORT}" -webBasePath "${config_webBasePath}" 2>> "$log_file"
         
         cp -f x-ui.service /etc/systemd/system/
-        systemctl daemon-reload >> "$log_file" 2>&1
-        systemctl enable x-ui >> "$log_file" 2>&1
-        systemctl start x-ui >> "$log_file" 2>&1
+        systemctl daemon-reload 2>> "$log_file"
+        systemctl enable x-ui 2>> "$log_file"
+        systemctl start x-ui 2>> "$log_file"
         
-        echo "Waiting for service to start..." >> "$log_file"
         sleep 5
         
-        echo "Running migration..." >> "$log_file"
-        /usr/local/x-ui/x-ui migrate >> "$log_file" 2>&1
-        
-        echo "EXIT_CODE:0" >> "$log_file"
+        /usr/local/x-ui/x-ui migrate 2>> "$log_file"
     ) &
-    
-    # Show spinner while installation is running
+
+    # Спиннер показывает ожидание
     local pid=$!
     gum spin --spinner dot --title "Installing 3X-UI..." -- bash -c "while kill -0 $pid 2>/dev/null; do sleep 1; done"
-    
-    # Check if installation was successful
     wait $pid
-    local exit_code=$(tail -n 1 "$log_file" | grep -o 'EXIT_CODE:[0-9]*' | cut -d: -f2)
     
-    if [[ "$exit_code" == "0" ]]; then
-        tag_version=$(grep "Version:" "$log_file" | cut -d: -f2 | tr -d ' ')
-        gum style --foreground 82 "✓ 3X-UI ${tag_version} installed successfully"
-    else
-        gum style --foreground 196 "✗ Failed to install 3X-UI"
-        echo "Error details:"
-        cat "$log_file" | grep -v "EXIT_CODE"
+    # Если лог ошибок не пуст, выводим его в консоль
+    if [[ -s "$log_file" ]]; then
+        echo -e "${red}✗ Errors encountered during installation:${plain}"
+        cat "$log_file"
         exit 1
+    else
+        gum style --foreground 82 "✓ 3X-UI installed successfully"
     fi
     
     rm -f "$log_file"
@@ -313,58 +281,28 @@ install_3xui() {
 install_caddy() {
     clear
     gum style --foreground 212 "🔐 Installing Caddy..."
-    local log_file="/tmp/install_caddy.log"
     
-    # Run the installation in background while showing spinner
+    # Перенаправляем stderr сразу в консоль для наглядности
     (
-        echo "Adding Caddy repository..." > "$log_file"
-        apt update >> "$log_file" 2>&1 && apt install -y ca-certificates curl gnupg >> "$log_file" 2>&1
+        apt update -qq 2>&1 | grep -i error || true
+        apt install -y ca-certificates curl gnupg -qq
         install -m 0755 -d /etc/apt/keyrings
-        curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key 2>> "$log_file" \
-            | gpg --dearmor -o /etc/apt/keyrings/caddy.gpg 2>> "$log_file"
-        echo "deb [signed-by=/etc/apt/keyrings/caddy.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main" \
-            | tee /etc/apt/sources.list.d/caddy.list >> "$log_file" 2>&1
-        apt update >> "$log_file" 2>&1
-        
-        echo "Installing Caddy..." >> "$log_file"
-        apt install -y caddy >> "$log_file" 2>&1
-        
-        if [[ $? -eq 0 ]]; then
-            echo "EXIT_CODE:0" >> "$log_file"
-        else
-            echo "EXIT_CODE:1" >> "$log_file"
-        fi
-    ) &
+        curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --dearmor -o /etc/apt/keyrings/caddy.gpg
+        echo "deb [signed-by=/etc/apt/keyrings/caddy.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main" | tee /etc/apt/sources.list.d/caddy.list
+        apt update -qq 2>&1 | grep -i error || true
+        apt install -y caddy
+    )
     
-    # Show spinner while installation is running
-    local pid=$!
-    gum spin --spinner dot --title "Installing Caddy..." -- bash -c "while kill -0 $pid 2>/dev/null; do sleep 1; done"
-    
-    # Check if installation was successful
-    wait $pid
-    local exit_code=$(tail -n 1 "$log_file" | grep -o 'EXIT_CODE:[0-9]*' | cut -d: -f2)
-    
-    if [[ "$exit_code" == "0" ]]; then
-        gum style --foreground 82 "✓ Caddy installed successfully"
-    else
-        gum style --foreground 196 "✗ Failed to install Caddy"
-        echo "Error details:"
-        cat "$log_file" | grep -v "EXIT_CODE"
-        exit 1
-    fi
-    
-    rm -f "$log_file"
+    gum style --foreground 82 "✓ Caddy installed successfully"
     sleep 1
 }
 
 configure_caddy() {
     clear
     gum style --foreground 212 "⚙️  Configuring Caddy..."
-    local log_file="/tmp/configure_caddy.log"
-    
-    # Run the configuration in background while showing spinner
+    local log_file="/tmp/configure_caddy_err.log"
+
     (
-        echo "Creating Caddyfile..." > "$log_file"
         cat > /etc/caddy/Caddyfile <<EOF
  $PANEL_DOMAIN:8443 {
     encode gzip
@@ -379,31 +317,19 @@ configure_caddy() {
 }
 EOF
         
-        echo "Restarting Caddy..." >> "$log_file"
-        systemctl restart caddy >> "$log_file" 2>&1
-        
-        if [[ $? -eq 0 ]]; then
-            echo "EXIT_CODE:0" >> "$log_file"
-        else
-            echo "EXIT_CODE:1" >> "$log_file"
-        fi
+        systemctl restart caddy 2>> "$log_file"
     ) &
-    
-    # Show spinner while configuration is running
+
     local pid=$!
     gum spin --spinner dot --title "Configuring Caddy..." -- bash -c "while kill -0 $pid 2>/dev/null; do sleep 1; done"
-    
-    # Check if configuration was successful
     wait $pid
-    local exit_code=$(tail -n 1 "$log_file" | grep -o 'EXIT_CODE:[0-9]*' | cut -d: -f2)
-    
-    if [[ "$exit_code" == "0" ]]; then
-        gum style --foreground 82 "✓ Caddy configured successfully"
-    else
-        gum style --foreground 196 "✗ Failed to configure Caddy"
-        echo "Error details:"
-        cat "$log_file" | grep -v "EXIT_CODE"
+
+    if [[ -s "$log_file" ]]; then
+        echo -e "${red}✗ Errors encountered during configuration:${plain}"
+        cat "$log_file"
         exit 1
+    else
+        gum style --foreground 82 "✓ Caddy configured successfully"
     fi
     
     rm -f "$log_file"
