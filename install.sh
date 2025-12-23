@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-
+##
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -101,50 +101,52 @@ show_config_form() {
     
     echo ""
     gum style --foreground 86 "📋 Credentials (leave empty for auto-generation):"
-    XUI_USERNAME=$(gum input --placeholder "Username" --value "$XUI_USERNAME")
-    XUI_PASSWORD=$(gum input --placeholder "Password" --password --value "$XUI_PASSWORD")
+    XUI_USERNAME=$(gum input --placeholder "Username" --value "$XUI_USERNAME" | xargs)
+    XUI_PASSWORD=$(gum input --placeholder "Password" --password --value "$XUI_PASSWORD" | xargs)
     
     echo ""
     gum style --foreground 86 "🔌 Port Configuration:"
-    PANEL_PORT=$(gum input --placeholder "Panel Port" --value "${PANEL_PORT:-8080}")
-    SUB_PORT=$(gum input --placeholder "Subscription Port" --value "${SUB_PORT:-2096}")
-    
-    echo ""
-    gum style --foreground 86 "🌐 Domain Configuration:"
-    PANEL_DOMAIN=$(gum input --placeholder "Panel Domain (e.g., panel.example.com)" --value "$PANEL_DOMAIN")
-    SUB_DOMAIN=$(gum input --placeholder "Subscription Domain (e.g., sub.example.com)" --value "$SUB_DOMAIN")
+    PANEL_PORT=$(gum input --placeholder "Panel Port" --value "${PANEL_PORT:-8080}" | xargs)
+    SUB_PORT=$(gum input --placeholder "Subscription Port" --value "${SUB_PORT:-2096}" | xargs)
     
     echo ""
     gum style --foreground 86 "⚡ Options:"
     
-    # Use gum confirm for independent options
+    # Ask about Caddy FIRST
     if gum confirm "Use Caddy Reverse Proxy (SSL/TLS)?"; then
         USE_CADDY="true"
-    else
-        USE_CADDY="false"
-    fi
-    
-    if gum confirm "Create Default VLESS Reality Inbound?"; then
-        CREATE_DEFAULT_INBOUND="true"
-    else
-        CREATE_DEFAULT_INBOUND="false"
-    fi
-    
-    # If Caddy is enabled, validate domains
-    if [[ "$USE_CADDY" == "true" ]]; then
+        # NOW show the domain inputs because Caddy is selected
+        echo ""
+        gum style --foreground 86 "🌐 Caddy Domain Configuration:"
+        PANEL_DOMAIN=$(gum input --placeholder "Panel Domain (e.g., panel.example.com)" --value "$PANEL_DOMAIN" | xargs)
+        SUB_DOMAIN=$(gum input --placeholder "Subscription Domain (e.g., sub.example.com)" --value "$SUB_DOMAIN" | xargs)
+        
+        # Validate domains IMMEDIATELY
         if [[ -z "$PANEL_DOMAIN" ]]; then
             gum style --foreground 196 "❌ Panel Domain is required when Caddy is enabled!"
             sleep 2
-            show_config_form
+            show_config_form # Restart the form
             return
         fi
         
         if [[ -z "$SUB_DOMAIN" ]]; then
             gum style --foreground 196 "❌ Subscription Domain is required when Caddy is enabled!"
             sleep 2
-            show_config_form
+            show_config_form # Restart the form
             return
         fi
+    else
+        USE_CADDY="false"
+        # Domains are not needed, so ensure they are empty if they had values from a previous run
+        PANEL_DOMAIN=""
+        SUB_DOMAIN=""
+    fi
+
+    # Ask about VLESS Reality
+    if gum confirm "Create Default VLESS Reality Inbound?"; then
+        CREATE_DEFAULT_INBOUND="true"
+    else
+        CREATE_DEFAULT_INBOUND="false"
     fi
     
     # Generate credentials if empty
@@ -166,9 +168,9 @@ show_config_form() {
     gum style --foreground 250 "  Password: ${XUI_PASSWORD:0:4}***${XUI_PASSWORD: -4}"
     gum style --foreground 250 "  Panel Port: $PANEL_PORT"
     gum style --foreground 250 "  Subscription Port: $SUB_PORT"
-    gum style --foreground 250 "  Panel Domain: $PANEL_DOMAIN"
-    gum style --foreground 250 "  Sub Domain: $SUB_DOMAIN"
     [[ "$USE_CADDY" == "true" ]] && gum style --foreground 250 "  ✓ Caddy Enabled"
+    [[ "$USE_CADDY" == "true" ]] && gum style --foreground 250 "    Panel Domain: $PANEL_DOMAIN"
+    [[ "$USE_CADDY" == "true" ]] && gum style --foreground 250 "    Sub Domain: $SUB_DOMAIN"
     [[ "$CREATE_DEFAULT_INBOUND" == "true" ]] && gum style --foreground 250 "  ✓ VLESS Reality Inbound"
     
     echo ""
