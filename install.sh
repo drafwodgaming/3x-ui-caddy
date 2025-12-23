@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-
+#
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -112,25 +112,23 @@ show_config_form() {
     echo ""
     gum style --foreground 86 "⚡ Options:"
     
-    # Use gum choose for options
-    options=()
-    [[ "$USE_CADDY" == "true" ]] && options+=("Use Caddy Reverse Proxy (SSL/TLS)")
-    [[ "$CREATE_DEFAULT_INBOUND" == "true" ]] && options+=("Create Default VLESS Reality Inbound")
-    
-    selected=$(gum choose --no-limit --selected="${options[@]}" \
+    # Use gum choose for options - исправленная часть
+    selected=$(gum choose --no-limit \
         "Use Caddy Reverse Proxy (SSL/TLS)" \
         "Create Default VLESS Reality Inbound")
     
-    # Parse selections
+    # Parse selections - исправленная часть
     USE_CADDY="false"
     CREATE_DEFAULT_INBOUND="false"
     
-    while IFS= read -r line; do
-        case "$line" in
-            *"Caddy"*) USE_CADDY="true" ;;
-            *"VLESS"*) CREATE_DEFAULT_INBOUND="true" ;;
-        esac
-    done <<< "$selected"
+    # Проверяем, есть ли выбор в списке
+    if echo "$selected" | grep -q "Caddy"; then
+        USE_CADDY="true"
+    fi
+    
+    if echo "$selected" | grep -q "VLESS"; then
+        CREATE_DEFAULT_INBOUND="true"
+    fi
     
     # If Caddy is enabled, ask for domains
     if [[ "$USE_CADDY" == "true" ]]; then
@@ -301,15 +299,16 @@ configure_caddy() {
     
     gum spin --spinner dot --title "Creating Caddyfile..." -- bash -c "
         cat > /etc/caddy/Caddyfile <<EOF
-${PANEL_DOMAIN}:8443 {
+ ${PANEL_DOMAIN}:8443 {
     encode gzip
     reverse_proxy 127.0.0.1:${PANEL_PORT}
     tls internal
 }
 
-${SUB_DOMAIN}:8443 {
+ ${SUB_DOMAIN}:8443 {
     encode gzip
     reverse_proxy 127.0.0.1:${SUB_PORT}
+    tls internal
 }
 EOF
         systemctl restart caddy
