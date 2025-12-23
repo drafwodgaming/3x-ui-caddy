@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#
+
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -16,7 +16,7 @@ if [[ -f /etc/os-release ]]; then
     source /etc/os-release
     release=$ID
 elif [[ -f /usr/lib/os-release ]]; then
-    source /usr/lib/os-release
+    source /etc/lib/os-release
     release=$ID
 else
     echo -e "${red}✗ Failed to detect OS${plain}"
@@ -185,29 +185,50 @@ install_base() {
     clear
     gum style --foreground 212 "📦 Installing base dependencies..."
     
-    gum spin --spinner dot --title "Installing packages..." -- bash -c '
-        case "'${release}'" in
+    # Create a temporary log file to capture output
+    local log_file="/tmp/install_base.log"
+    
+    # Run the installation in background while showing spinner
+    (
+        case "${release}" in
             ubuntu | debian | armbian)
-                apt-get update >/dev/null 2>&1 && apt-get install -y -q wget curl tar tzdata sqlite3 jq >/dev/null 2>&1
+                apt-get update > "$log_file" 2>&1 && apt-get install -y -q wget curl tar tzdata sqlite3 jq >> "$log_file" 2>&1
             ;;
             fedora | amzn | virtuozzo | rhel | almalinux | rocky | ol)
-                dnf -y update >/dev/null 2>&1 && dnf install -y -q wget curl tar tzdata sqlite jq >/dev/null 2>&1
+                dnf -y update > "$log_file" 2>&1 && dnf install -y -q wget curl tar tzdata sqlite jq >> "$log_file" 2>&1
             ;;
             centos)
-                if [[ "'${VERSION_ID}'" =~ ^7 ]]; then
-                    yum -y update >/dev/null 2>&1 && yum install -y wget curl tar tzdata sqlite jq >/dev/null 2>&1
+                if [[ "${VERSION_ID}" =~ ^7 ]]; then
+                    yum -y update > "$log_file" 2>&1 && yum install -y wget curl tar tzdata sqlite jq >> "$log_file" 2>&1
                 else
-                    dnf -y update >/dev/null 2>&1 && dnf install -y -q wget curl tar tzdata sqlite jq >/dev/null 2>&1
+                    dnf -y update > "$log_file" 2>&1 && dnf install -y -q wget curl tar tzdata sqlite jq >> "$log_file" 2>&1
                 fi
             ;;
             *)
-                apt-get update >/dev/null 2>&1 && apt-get install -y -q wget curl tar tzdata sqlite3 jq >/dev/null 2>&1
+                apt-get update > "$log_file" 2>&1 && apt-get install -y -q wget curl tar tzdata sqlite3 jq >> "$log_file" 2>&1
             ;;
         esac
-        sleep 1
-    '
+        echo "EXIT_CODE:$?" >> "$log_file"
+    ) &
     
-    gum style --foreground 82 "✓ Dependencies installed successfully"
+    # Show spinner while installation is running
+    local pid=$!
+    gum spin --spinner dot --title "Installing packages..." -- bash -c "while kill -0 $pid 2>/dev/null; do sleep 1; done"
+    
+    # Check if installation was successful
+    wait $pid
+    local exit_code=$(tail -n 1 "$log_file" | grep -o 'EXIT_CODE:[0-9]*' | cut -d: -f2)
+    
+    if [[ "$exit_code" == "0" ]]; then
+        gum style --foreground 82 "✓ Dependencies installed successfully"
+    else
+        gum style --foreground 196 "✗ Failed to install dependencies"
+        echo "Error details:"
+        cat "$log_file" | grep -v "EXIT_CODE"
+        exit 1
+    fi
+    
+    rm -f "$log_file"
     sleep 1
 }
 
@@ -215,59 +236,96 @@ install_3xui() {
     clear
     gum style --foreground 212 "🚀 Installing 3X-UI..."
     
-    cd /usr/local/
+    # Create a temporary log file to capture output
+    local log_file="/tmp/install_3xui.log"
     
-    gum spin --spinner dot --title "Fetching latest version..." -- bash -c '
+    # Fetch latest version
+    (
+        echo "Fetching latest version..." > "$log_file"
         tag_version=$(curl -Ls "https://api.github.com/repos/drafwodgaming/3x-ui-caddy/releases/latest" \
-            | grep "\"tag_name\":" | sed -E "s/.*\"([^\"]+)\".*/\1/")
-        echo "$tag_version" > /tmp/xui_version
-        [[ ! -n "$tag_version" ]] && exit 1
-    '
-    
-    tag_version=$(cat /tmp/xui_version)
-    gum style --foreground 86 "Version: $tag_version"
-    
-    gum spin --spinner dot --title "Downloading 3X-UI..." -- bash -c "
+            | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+        [[ ! -n "$tag_version" ]] && echo "EXIT_CODE:1" >> "$log_file" && exit 1
+        echo "Version: $tag_version" >> "$log_file"
+        
+        cd /usr/local/
+        
+        echo "Downloading 3X-UI..." >> "$log_file"
         wget --inet4-only -q -O /usr/local/x-ui-linux-$(arch).tar.gz \
             https://github.com/drafwodgaming/3x-ui-caddy/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz
+        
+        if [[ $? -ne 0 ]]; then
+            echo "Download failed" >> "$log_file"
+            echo "EXIT_CODE:1" >> "$log_file"
+            exit 1
+        fi
+        
+        echo "Downloading x-ui.sh..." >> "$log_file"
         wget --inet4-only -q -O /usr/bin/x-ui-temp \
             https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/main/x-ui.sh
-    "
-    
-    gum spin --spinner dot --title "Extracting files..." -- bash -c '
+        
         if [[ -e /usr/local/x-ui/ ]]; then
-            systemctl stop x-ui 2>/dev/null || true
-            rm /usr/local/x-ui/ -rf
+            echo "Stopping existing x-ui service..." >> "$log_file"
+            systemctl stop x-ui 2>> "$log_file" || true
+            rm -rf /usr/local/x-ui/ 2>> "$log_file"
         fi
-        tar zxf x-ui-linux-'$(arch)'.tar.gz >/dev/null 2>&1
-        rm x-ui-linux-'$(arch)'.tar.gz -f
-    '
-    
-    cd x-ui
-    chmod +x x-ui x-ui.sh
-    
-    if [[ $(arch) == "armv5" || $(arch) == "armv6" || $(arch) == "armv7" ]]; then
-        mv bin/xray-linux-$(arch) bin/xray-linux-arm
-        chmod +x bin/xray-linux-arm
-    fi
-    chmod +x x-ui bin/xray-linux-$(arch)
-    
-    mv -f /usr/bin/x-ui-temp /usr/bin/x-ui
-    chmod +x /usr/bin/x-ui
-    
-    gum spin --spinner dot --title "Configuring panel..." -- bash -c "
-        config_webBasePath=\$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 18 | head -n 1)
-        /usr/local/x-ui/x-ui setting -username '${XUI_USERNAME}' -password '${XUI_PASSWORD}' \
-            -port '${PANEL_PORT}' -webBasePath \"\$config_webBasePath\" >/dev/null 2>&1
+        
+        echo "Extracting files..." >> "$log_file"
+        tar zxf x-ui-linux-$(arch).tar.gz >> "$log_file" 2>&1
+        rm x-ui-linux-$(arch).tar.gz -f
+        
+        cd x-ui
+        chmod +x x-ui x-ui.sh
+        
+        if [[ $(arch) == "armv5" || $(arch) == "armv6" || $(arch) == "armv7" ]]; then
+            echo "Adjusting for ARM architecture..." >> "$log_file"
+            mv bin/xray-linux-$(arch) bin/xray-linux-arm
+            chmod +x bin/xray-linux-arm
+        fi
+        
+        chmod +x x-ui bin/xray-linux-$(arch)
+        
+        mv -f /usr/bin/x-ui-temp /usr/bin/x-ui
+        chmod +x /usr/bin/x-ui
+        
+        echo "Configuring panel..." >> "$log_file"
+        config_webBasePath=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 18 | head -n 1)
+        
+        /usr/local/x-ui/x-ui setting -username "${XUI_USERNAME}" -password "${XUI_PASSWORD}" \
+            -port "${PANEL_PORT}" -webBasePath "${config_webBasePath}" >> "$log_file" 2>&1
+        
         cp -f x-ui.service /etc/systemd/system/
-        systemctl daemon-reload
-        systemctl enable x-ui >/dev/null 2>&1
-        systemctl start x-ui
+        systemctl daemon-reload >> "$log_file" 2>&1
+        systemctl enable x-ui >> "$log_file" 2>&1
+        systemctl start x-ui >> "$log_file" 2>&1
+        
+        echo "Waiting for service to start..." >> "$log_file"
         sleep 5
-        /usr/local/x-ui/x-ui migrate >/dev/null 2>&1
-    "
+        
+        echo "Running migration..." >> "$log_file"
+        /usr/local/x-ui/x-ui migrate >> "$log_file" 2>&1
+        
+        echo "EXIT_CODE:0" >> "$log_file"
+    ) &
     
-    gum style --foreground 82 "✓ 3X-UI ${tag_version} installed successfully"
+    # Show spinner while installation is running
+    local pid=$!
+    gum spin --spinner dot --title "Installing 3X-UI..." -- bash -c "while kill -0 $pid 2>/dev/null; do sleep 1; done"
+    
+    # Check if installation was successful
+    wait $pid
+    local exit_code=$(tail -n 1 "$log_file" | grep -o 'EXIT_CODE:[0-9]*' | cut -d: -f2)
+    
+    if [[ "$exit_code" == "0" ]]; then
+        tag_version=$(grep "Version:" "$log_file" | cut -d: -f2 | tr -d ' ')
+        gum style --foreground 82 "✓ 3X-UI ${tag_version} installed successfully"
+    else
+        gum style --foreground 196 "✗ Failed to install 3X-UI"
+        echo "Error details:"
+        cat "$log_file" | grep -v "EXIT_CODE"
+        exit 1
+    fi
+    
+    rm -f "$log_file"
     sleep 1
 }
 
@@ -275,21 +333,48 @@ install_caddy() {
     clear
     gum style --foreground 212 "🔐 Installing Caddy..."
     
-    gum spin --spinner dot --title "Adding Caddy repository..." -- bash -c '
-        apt update >/dev/null 2>&1 && apt install -y ca-certificates curl gnupg >/dev/null 2>&1
+    # Create a temporary log file to capture output
+    local log_file="/tmp/install_caddy.log"
+    
+    # Run the installation in background while showing spinner
+    (
+        echo "Adding Caddy repository..." > "$log_file"
+        apt update >> "$log_file" 2>&1 && apt install -y ca-certificates curl gnupg >> "$log_file" 2>&1
         install -m 0755 -d /etc/apt/keyrings
-        curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key 2>/dev/null \
-            | gpg --dearmor -o /etc/apt/keyrings/caddy.gpg 2>/dev/null
+        curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key 2>> "$log_file" \
+            | gpg --dearmor -o /etc/apt/keyrings/caddy.gpg 2>> "$log_file"
         echo "deb [signed-by=/etc/apt/keyrings/caddy.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main" \
-            | tee /etc/apt/sources.list.d/caddy.list >/dev/null
-        apt update >/dev/null 2>&1
-    '
+            | tee /etc/apt/sources.list.d/caddy.list >> "$log_file" 2>&1
+        apt update >> "$log_file" 2>&1
+        
+        echo "Installing Caddy..." >> "$log_file"
+        apt install -y caddy >> "$log_file" 2>&1
+        
+        if [[ $? -eq 0 ]]; then
+            echo "EXIT_CODE:0" >> "$log_file"
+        else
+            echo "EXIT_CODE:1" >> "$log_file"
+        fi
+    ) &
     
-    gum spin --spinner dot --title "Installing Caddy..." -- bash -c '
-        apt install -y caddy >/dev/null 2>&1
-    '
+    # Show spinner while installation is running
+    local pid=$!
+    gum spin --spinner dot --title "Installing Caddy..." -- bash -c "while kill -0 $pid 2>/dev/null; do sleep 1; done"
     
-    gum style --foreground 82 "✓ Caddy installed successfully"
+    # Check if installation was successful
+    wait $pid
+    local exit_code=$(tail -n 1 "$log_file" | grep -o 'EXIT_CODE:[0-9]*' | cut -d: -f2)
+    
+    if [[ "$exit_code" == "0" ]]; then
+        gum style --foreground 82 "✓ Caddy installed successfully"
+    else
+        gum style --foreground 196 "✗ Failed to install Caddy"
+        echo "Error details:"
+        cat "$log_file" | grep -v "EXIT_CODE"
+        exit 1
+    fi
+    
+    rm -f "$log_file"
     sleep 1
 }
 
@@ -297,25 +382,54 @@ configure_caddy() {
     clear
     gum style --foreground 212 "⚙️  Configuring Caddy..."
     
-    gum spin --spinner dot --title "Creating Caddyfile..." -- bash -c "
+    # Create a temporary log file to capture output
+    local log_file="/tmp/configure_caddy.log"
+    
+    # Run the configuration in background while showing spinner
+    (
+        echo "Creating Caddyfile..." > "$log_file"
         cat > /etc/caddy/Caddyfile <<EOF
- ${PANEL_DOMAIN}:8443 {
+ $PANEL_DOMAIN:8443 {
     encode gzip
-    reverse_proxy 127.0.0.1:${PANEL_PORT}
+    reverse_proxy 127.0.0.1:$PANEL_PORT
     tls internal
 }
 
- ${SUB_DOMAIN}:8443 {
+ $SUB_DOMAIN:8443 {
     encode gzip
-    reverse_proxy 127.0.0.1:${SUB_PORT}
+    reverse_proxy 127.0.0.1:$SUB_PORT
     tls internal
 }
 EOF
-        systemctl restart caddy
-        sleep 2
-    "
+        
+        echo "Restarting Caddy..." >> "$log_file"
+        systemctl restart caddy >> "$log_file" 2>&1
+        
+        if [[ $? -eq 0 ]]; then
+            echo "EXIT_CODE:0" >> "$log_file"
+        else
+            echo "EXIT_CODE:1" >> "$log_file"
+        fi
+    ) &
     
-    gum style --foreground 82 "✓ Caddy configured successfully"
+    # Show spinner while configuration is running
+    local pid=$!
+    gum spin --spinner dot --title "Configuring Caddy..." -- bash -c "while kill -0 $pid 2>/dev/null; do sleep 1; done"
+    
+    # Check if configuration was successful
+    wait $pid
+    local exit_code=$(tail -n 1 "$log_file" | grep -o 'EXIT_CODE:[0-9]*' | cut -d: -f2)
+    
+    if [[ "$exit_code" == "0" ]]; then
+        gum style --foreground 82 "✓ Caddy configured successfully"
+    else
+        gum style --foreground 196 "✗ Failed to configure Caddy"
+        echo "Error details:"
+        cat "$log_file" | grep -v "EXIT_CODE"
+        exit 1
+    fi
+    
+    rm -f "$log_file"
     sleep 1
 }
 
