@@ -1,5 +1,5 @@
 #!/bin/bash
-
+#
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -122,21 +122,6 @@ update_menu() {
         echo -e "${red}Failed to update the menu.${plain}"
         return 1
     fi
-}
-
-legacy_version() {
-    echo -n "Enter the panel version (like 2.4.0):"
-    read -r tag_version
-
-    if [ -z "$tag_version" ]; then
-        echo "Panel version cannot be empty. Exiting."
-        exit 1
-    fi
-    # Use the entered panel version in the download link
-    install_command="bash <(curl -Ls "https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/v$tag_version/install.sh") v$tag_version"
-
-    echo "Downloading and installing panel version $tag_version..."
-    eval $install_command
 }
 
 # Function to handle the deletion of the script file
@@ -262,34 +247,16 @@ check_config() {
         server_ip=$(curl -s --max-time 3 https://4.ident.me)
     fi
 
-    # Check if Caddy is installed and configured as a reverse proxy for the panel
-    local caddy_configured=false
-    local panel_domain=""
-    
-    if [[ -f /etc/caddy/Caddyfile ]]; then
-        # Extract the domain from Caddyfile by finding the line that proxies to the panel's port
-        panel_domain=$(grep -E "reverse_proxy 127.0.0.1:${existing_port}" /etc/caddy/Caddyfile | head -1 | awk '{print $1}' | sed 's/:8443//')
-        if [[ -n "$panel_domain" ]]; then
-            caddy_configured=true
-        fi
-    fi
-
-    if [[ "$caddy_configured" == "true" ]]; then
-        # Caddy is configured, show the secure URL via Caddy
-        echo -e "${green}Panel is accessible via Caddy reverse proxy with SSL.${plain}"
-        echo -e "${green}Access URL (via Caddy): https://${panel_domain}:8443${existing_webBasePath}${plain}"
-    elif [[ -n "$existing_cert" ]]; then
-        # Caddy is not configured, but x-ui has its own SSL cert
+    if [[ -n "$existing_cert" ]]; then
         local domain=$(basename "$(dirname "$existing_cert")")
+
         if [[ "$domain" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-            echo -e "${green}Access URL (SSL): https://${domain}:${existing_port}${existing_webBasePath}${plain}"
+            echo -e "${green}Access URL: https://${domain}:${existing_port}${existing_webBasePath}${plain}"
         else
-            echo -e "${green}Access URL (SSL): https://${server_ip}:${existing_port}${existing_webBasePath}${plain}"
+            echo -e "${green}Access URL: https://${server_ip}:${existing_port}${existing_webBasePath}${plain}"
         fi
     else
-        # Neither Caddy nor x-ui SSL is configured
-        echo -e "${yellow}Warning: Panel is not secure with SSL.${plain}"
-        echo -e "${green}Access URL (HTTP): http://${server_ip}:${existing_port}${existing_webBasePath}${plain}"
+        echo -e "${green}Access URL: http://${server_ip}:${existing_port}${existing_webBasePath}${plain}"
     fi
 }
 
@@ -540,7 +507,7 @@ enable_bbr() {
     arch | manjaro | parch)
         pacman -Sy --noconfirm ca-certificates
         ;;
-    opensuse-tumbleweed | opensuse-leap)
+	opensuse-tumbleweed | opensuse-leap)
         zypper refresh && zypper -q install -y ca-certificates
         ;;
     alpine)
@@ -694,197 +661,6 @@ show_xray_status() {
     fi
 }
 
-firewall_menu() {
-    echo -e "${green}\t1.${plain} ${green}Install${plain} Firewall"
-    echo -e "${green}\t2.${plain} Port List [numbered]"
-    echo -e "${green}\t3.${plain} ${green}Open${plain} Ports"
-    echo -e "${green}\t4.${plain} ${red}Delete${plain} Ports from List"
-    echo -e "${green}\t5.${plain} ${green}Enable${plain} Firewall"
-    echo -e "${green}\t6.${plain} ${red}Disable${plain} Firewall"
-    echo -e "${green}\t7.${plain} Firewall Status"
-    echo -e "${green}\t0.${plain} Back to Main Menu"
-    read -rp "Choose an option: " choice
-    case "$choice" in
-    0)
-        show_menu
-        ;;
-    1)
-        install_firewall
-        firewall_menu
-        ;;
-    2)
-        ufw status numbered
-        firewall_menu
-        ;;
-    3)
-        open_ports
-        firewall_menu
-        ;;
-    4)
-        delete_ports
-        firewall_menu
-        ;;
-    5)
-        ufw enable
-        firewall_menu
-        ;;
-    6)
-        ufw disable
-        firewall_menu
-        ;;
-    7)
-        ufw status verbose
-        firewall_menu
-        ;;
-    *)
-        echo -e "${red}Invalid option. Please select a valid number.${plain}\n"
-        firewall_menu
-        ;;
-    esac
-}
-
-install_firewall() {
-    if ! command -v ufw &>/dev/null; then
-        echo "ufw firewall is not installed. Installing now..."
-        apt-get update
-        apt-get install -y ufw
-    else
-        echo "ufw firewall is already installed"
-    fi
-
-    # Check if the firewall is inactive
-    if ufw status | grep -q "Status: active"; then
-        echo "Firewall is already active"
-    else
-        echo "Activating firewall..."
-        # Open the necessary ports
-        ufw allow ssh
-        ufw allow http
-        ufw allow https
-        ufw allow 2053/tcp #webPort
-        ufw allow 2096/tcp #subport
-
-        # Enable the firewall
-        ufw --force enable
-    fi
-}
-
-open_ports() {
-    # Prompt the user to enter the ports they want to open
-    read -rp "Enter the ports you want to open (e.g. 80,443,2053 or range 400-500): " ports
-
-    # Check if the input is valid
-    if ! [[ $ports =~ ^([0-9]+|[0-9]+-[0-9]+)(,([0-9]+|[0-9]+-[0-9]+))*$ ]]; then
-        echo "Error: Invalid input. Please enter a comma-separated list of ports or a range of ports (e.g. 80,443,2053 or 400-500)." >&2
-        exit 1
-    fi
-
-    # Open the specified ports using ufw
-    IFS=',' read -ra PORT_LIST <<<"$ports"
-    for port in "${PORT_LIST[@]}"; do
-        if [[ $port == *-* ]]; then
-            # Split the range into start and end ports
-            start_port=$(echo $port | cut -d'-' -f1)
-            end_port=$(echo $port | cut -d'-' -f2)
-            # Open the port range
-            ufw allow $start_port:$end_port/tcp
-            ufw allow $start_port:$end_port/udp
-        else
-            # Open the single port
-            ufw allow "$port"
-        fi
-    done
-
-    # Confirm that the ports are opened
-    echo "Opened the specified ports:"
-    for port in "${PORT_LIST[@]}"; do
-        if [[ $port == *-* ]]; then
-            start_port=$(echo $port | cut -d'-' -f1)
-            end_port=$(echo $port | cut -d'-' -f2)
-            # Check if the port range has been successfully opened
-            (ufw status | grep -q "$start_port:$end_port") && echo "$start_port-$end_port"
-        else
-            # Check if the individual port has been successfully opened
-            (ufw status | grep -q "$port") && echo "$port"
-        fi
-    done
-}
-
-delete_ports() {
-    # Display current rules with numbers
-    echo "Current UFW rules:"
-    ufw status numbered
-
-    # Ask the user how they want to delete rules
-    echo "Do you want to delete rules by:"
-    echo "1) Rule numbers"
-    echo "2) Ports"
-    read -rp "Enter your choice (1 or 2): " choice
-
-    if [[ $choice -eq 1 ]]; then
-        # Deleting by rule numbers
-        read -rp "Enter the rule numbers you want to delete (1, 2, etc.): " rule_numbers
-
-        # Validate the input
-        if ! [[ $rule_numbers =~ ^([0-9]+)(,[0-9]+)*$ ]]; then
-            echo "Error: Invalid input. Please enter a comma-separated list of rule numbers." >&2
-            exit 1
-        fi
-
-        # Split numbers into an array
-        IFS=',' read -ra RULE_NUMBERS <<<"$rule_numbers"
-        for rule_number in "${RULE_NUMBERS[@]}"; do
-            # Delete the rule by number
-            ufw delete "$rule_number" || echo "Failed to delete rule number $rule_number"
-        done
-
-        echo "Selected rules have been deleted."
-
-    elif [[ $choice -eq 2 ]]; then
-        # Deleting by ports
-        read -rp "Enter the ports you want to delete (e.g. 80,443,2053 or range 400-500): " ports
-
-        # Validate the input
-        if ! [[ $ports =~ ^([0-9]+|[0-9]+-[0-9]+)(,([0-9]+|[0-9]+-[0-9]+))*$ ]]; then
-            echo "Error: Invalid input. Please enter a comma-separated list of ports or a range of ports (e.g. 80,443,2053 or 400-500)." >&2
-            exit 1
-        fi
-
-        # Split ports into an array
-        IFS=',' read -ra PORT_LIST <<<"$ports"
-        for port in "${PORT_LIST[@]}"; do
-            if [[ $port == *-* ]]; then
-                # Split the port range
-                start_port=$(echo $port | cut -d'-' -f1)
-                end_port=$(echo $port | cut -d'-' -f2)
-                # Delete the port range
-                ufw delete allow $start_port:$end_port/tcp
-                ufw delete allow $start_port:$end_port/udp
-            else
-                # Delete a single port
-                ufw delete allow "$port"
-            fi
-        done
-
-        # Confirmation of deletion
-        echo "Deleted the specified ports:"
-        for port in "${PORT_LIST[@]}"; do
-            if [[ $port == *-* ]]; then
-                start_port=$(echo $port | cut -d'-' -f1)
-                end_port=$(echo $port | cut -d'-' -f2)
-                # Check if the port range has been deleted
-                (ufw status | grep -q "$start_port:$end_port") || echo "$start_port-$end_port"
-            else
-                # Check if the individual port has been deleted
-                (ufw status | grep -q "$port") || echo "$port"
-            fi
-        done
-    else
-        echo "${red}Error:${plain} Invalid choice. Please enter 1 or 2." >&2
-        exit 1
-    fi
-}
-
 update_all_geofiles() {
         update_main_geofiles
         update_ir_geofiles
@@ -892,18 +668,18 @@ update_all_geofiles() {
 }
 
 update_main_geofiles() {
-        wget -O /usr/local/x-ui/bin/geoip.dat       https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
-        wget -O /usr/local/x-ui/bin/geosite.dat     https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat
+        wget -O geoip.dat       https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
+        wget -O geosite.dat     https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat
 }
 
 update_ir_geofiles() {
-        wget -O /usr/local/x-ui/bin/geoip_IR.dat    https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geoip.dat
-        wget -O /usr/local/x-ui/bin/geosite_IR.dat  https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geosite.dat
+        wget -O geoip_IR.dat    https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geoip.dat
+        wget -O geosite_IR.dat  https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geosite.dat
 }
 
 update_ru_geofiles() {
-        wget -O /usr/local/x-ui/bin/geoip_RU.dat    https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geoip.dat
-        wget -O /usr/local/x-ui/bin/geosite_RU.dat  https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat
+        wget -O geoip_RU.dat    https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geoip.dat
+        wget -O geosite_RU.dat  https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat
 }
 
 update_geo() {
@@ -970,113 +746,6 @@ install_acme() {
     return 0
 }
 
-ssl_cert_issue_main() {
-    echo -e "${green}\t1.${plain} Get SSL"
-    echo -e "${green}\t2.${plain} Revoke"
-    echo -e "${green}\t3.${plain} Force Renew"
-    echo -e "${green}\t4.${plain} Show Existing Domains"
-    echo -e "${green}\t5.${plain} Set Cert paths for the panel"
-    echo -e "${green}\t0.${plain} Back to Main Menu"
-
-    read -rp "Choose an option: " choice
-    case "$choice" in
-    0)
-        show_menu
-        ;;
-    1)
-        ssl_cert_issue
-        ssl_cert_issue_main
-        ;;
-    2)
-        local domains=$(find /root/cert/ -mindepth 1 -maxdepth 1 -type d -exec basename {} \;)
-        if [ -z "$domains" ]; then
-            echo "No certificates found to revoke."
-        else
-            echo "Existing domains:"
-            echo "$domains"
-            read -rp "Please enter a domain from the list to revoke the certificate: " domain
-            if echo "$domains" | grep -qw "$domain"; then
-                ~/.acme.sh/acme.sh --revoke -d ${domain}
-                LOGI "Certificate revoked for domain: $domain"
-            else
-                echo "Invalid domain entered."
-            fi
-        fi
-        ssl_cert_issue_main
-        ;;
-    3)
-        local domains=$(find /root/cert/ -mindepth 1 -maxdepth 1 -type d -exec basename {} \;)
-        if [ -z "$domains" ]; then
-            echo "No certificates found to renew."
-        else
-            echo "Existing domains:"
-            echo "$domains"
-            read -rp "Please enter a domain from the list to renew the SSL certificate: " domain
-            if echo "$domains" | grep -qw "$domain"; then
-                ~/.acme.sh/acme.sh --renew -d ${domain} --force
-                LOGI "Certificate forcefully renewed for domain: $domain"
-            else
-                echo "Invalid domain entered."
-            fi
-        fi
-        ssl_cert_issue_main
-        ;;
-    4)
-        local domains=$(find /root/cert/ -mindepth 1 -maxdepth 1 -type d -exec basename {} \;)
-        if [ -z "$domains" ]; then
-            echo "No certificates found."
-        else
-            echo "Existing domains and their paths:"
-            for domain in $domains; do
-                local cert_path="/root/cert/${domain}/fullchain.pem"
-                local key_path="/root/cert/${domain}/privkey.pem"
-                if [[ -f "${cert_path}" && -f "${key_path}" ]]; then
-                    echo -e "Domain: ${domain}"
-                    echo -e "\tCertificate Path: ${cert_path}"
-                    echo -e "\tPrivate Key Path: ${key_path}"
-                else
-                    echo -e "Domain: ${domain} - Certificate or Key missing."
-                fi
-            done
-        fi
-        ssl_cert_issue_main
-        ;;
-    5)
-        local domains=$(find /root/cert/ -mindepth 1 -maxdepth 1 -type d -exec basename {} \;)
-        if [ -z "$domains" ]; then
-            echo "No certificates found."
-        else
-            echo "Available domains:"
-            echo "$domains"
-            read -rp "Please choose a domain to set the panel paths: " domain
-
-            if echo "$domains" | grep -qw "$domain"; then
-                local webCertFile="/root/cert/${domain}/fullchain.pem"
-                local webKeyFile="/root/cert/${domain}/privkey.pem"
-
-                if [[ -f "${webCertFile}" && -f "${webKeyFile}" ]]; then
-                    /usr/local/x-ui/x-ui cert -webCert "$webCertFile" -webCertKey "$webKeyFile"
-                    echo "Panel paths set for domain: $domain"
-                    echo "  - Certificate File: $webCertFile"
-                    echo "  - Private Key File: $webKeyFile"
-                    restart
-                else
-                    echo "Certificate or private key not found for domain: $domain."
-                fi
-            else
-                echo "Invalid domain entered."
-            fi
-        fi
-        ssl_cert_issue_main
-        ;;
-
-    *)
-        echo -e "${red}Invalid option. Please select a valid number.${plain}\n"
-        ssl_cert_issue_main
-        ;;
-    esac
-}
-
 ssl_cert_issue() {
     local existing_webBasePath=$(/usr/local/x-ui/x-ui setting -show true | grep -Eo 'webBasePath: .+' | awk '{print $2}')
     local existing_port=$(/usr/local/x-ui/x-ui setting -show true | grep -Eo 'port: .+' | awk '{print $2}')
@@ -1108,7 +777,7 @@ ssl_cert_issue() {
     arch | manjaro | parch)
         pacman -Sy --noconfirm socat
         ;;
-    opensuse-tumbleweed | opensuse-leap)
+	opensuse-tumbleweed | opensuse-leap)
         zypper refresh && zypper -q install -y socat
         ;;
     alpine)
@@ -1241,149 +910,6 @@ ssl_cert_issue() {
         fi
     else
         LOGI "Skipping panel path setting."
-    fi
-}
-
-ssl_cert_issue_CF() {
-    local existing_webBasePath=$(/usr/local/x-ui/x-ui setting -show true | grep -Eo 'webBasePath: .+' | awk '{print $2}')
-    local existing_port=$(/usr/local/x-ui/x-ui setting -show true | grep -Eo 'port: .+' | awk '{print $2}')
-    LOGI "****** Instructions for Use ******"
-    LOGI "Follow the steps below to complete the process:"
-    LOGI "1. Cloudflare Registered E-mail."
-    LOGI "2. Cloudflare Global API Key."
-    LOGI "3. The Domain Name."
-    LOGI "4. Once the certificate is issued, you will be prompted to set the certificate for the panel (optional)."
-    LOGI "5. The script also supports automatic renewal of the SSL certificate after installation."
-
-    confirm "Do you confirm the information and wish to proceed? [y/n]" "y"
-
-    if [ $? -eq 0 ]; then
-        # Check for acme.sh first
-        if ! command -v ~/.acme.sh/acme.sh &>/dev/null; then
-            echo "acme.sh could not be found. We will install it."
-            install_acme
-            if [ $? -ne 0 ]; then
-                LOGE "Install acme failed, please check logs."
-                exit 1
-            fi
-        fi
-
-        CF_Domain=""
-
-        LOGD "Please set a domain name:"
-        read -rp "Input your domain here: " CF_Domain
-        LOGD "Your domain name is set to: ${CF_Domain}"
-
-        # Set up Cloudflare API details
-        CF_GlobalKey=""
-        CF_AccountEmail=""
-        LOGD "Please set the API key:"
-        read -rp "Input your key here: " CF_GlobalKey
-        LOGD "Your API key is: ${CF_GlobalKey}"
-
-        LOGD "Please set up registered email:"
-        read -rp "Input your email here: " CF_AccountEmail
-        LOGD "Your registered email address is: ${CF_AccountEmail}"
-
-        # Set the default CA to Let's Encrypt
-        ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-        if [ $? -ne 0 ]; then
-            LOGE "Default CA, Let'sEncrypt fail, script exiting..."
-            exit 1
-        fi
-
-        export CF_Key="${CF_GlobalKey}"
-        export CF_Email="${CF_AccountEmail}"
-
-        # Issue the certificate using Cloudflare DNS
-        ~/.acme.sh/acme.sh --issue --dns dns_cf -d ${CF_Domain} -d *.${CF_Domain} --log --force
-        if [ $? -ne 0 ]; then
-            LOGE "Certificate issuance failed, script exiting..."
-            exit 1
-        else
-            LOGI "Certificate issued successfully, Installing..."
-        fi
-
-         # Install the certificate
-        certPath="/root/cert/${CF_Domain}"
-        if [ -d "$certPath" ]; then
-            rm -rf ${certPath}
-        fi
-
-        mkdir -p ${certPath}
-        if [ $? -ne 0 ]; then
-            LOGE "Failed to create directory: ${certPath}"
-            exit 1
-        fi
-
-        reloadCmd="x-ui restart"
-
-        LOGI "Default --reloadcmd for ACME is: ${yellow}x-ui restart"
-        LOGI "This command will run on every certificate issue and renew."
-        read -rp "Would you like to modify --reloadcmd for ACME? (y/n): " setReloadcmd
-        if [[ "$setReloadcmd" == "y" || "$setReloadcmd" == "Y" ]]; then
-            echo -e "\n${green}\t1.${plain} Preset: systemctl reload nginx ; x-ui restart"
-            echo -e "${green}\t2.${plain} Input your own command"
-            echo -e "${green}\t0.${plain} Keep default reloadcmd"
-            read -rp "Choose an option: " choice
-            case "$choice" in
-            1)
-                LOGI "Reloadcmd is: systemctl reload nginx ; x-ui restart"
-                reloadCmd="systemctl reload nginx ; x-ui restart"
-                ;;
-            2)  
-                LOGD "It's recommended to put x-ui restart at the end, so it won't raise an error if other services fails"
-                read -rp "Please enter your reloadcmd (example: systemctl reload nginx ; x-ui restart): " reloadCmd
-                LOGI "Your reloadcmd is: ${reloadCmd}"
-                ;;
-            *)
-                LOGI "Keep default reloadcmd"
-                ;;
-            esac
-        fi
-        ~/.acme.sh/acme.sh --installcert -d ${CF_Domain} -d *.${CF_Domain} \
-            --key-file ${certPath}/privkey.pem \
-            --fullchain-file ${certPath}/fullchain.pem --reloadcmd "${reloadCmd}"
-        
-        if [ $? -ne 0 ]; then
-            LOGE "Certificate installation failed, script exiting..."
-            exit 1
-        else
-            LOGI "Certificate installed successfully, Turning on automatic updates..."
-        fi
-
-        # Enable auto-update
-        ~/.acme.sh/acme.sh --upgrade --auto-upgrade
-        if [ $? -ne 0 ]; then
-            LOGE "Auto update setup failed, script exiting..."
-            exit 1
-        else
-            LOGI "The certificate is installed and auto-renewal is turned on. Specific information is as follows:"
-            ls -lah ${certPath}/*
-            chmod 755 ${certPath}/*
-        fi
-
-        # Prompt user to set panel paths after successful certificate installation
-        read -rp "Would you like to set this certificate for the panel? (y/n): " setPanel
-        if [[ "$setPanel" == "y" || "$setPanel" == "Y" ]]; then
-            local webCertFile="${certPath}/fullchain.pem"
-            local webKeyFile="${certPath}/privkey.pem"
-
-            if [[ -f "$webCertFile" && -f "$webKeyFile" ]]; then
-                /usr/local/x-ui/x-ui cert -webCert "$webCertFile" -webCertKey "$webKeyFile"
-                LOGI "Panel paths set for domain: $CF_Domain"
-                LOGI "  - Certificate File: $webCertFile"
-                LOGI "  - Private Key File: $webKeyFile"
-                echo -e "${green}Access URL: https://${CF_Domain}:${existing_port}${existing_webBasePath}${plain}"
-                restart
-            else
-                LOGE "Error: Certificate or private key file not found for domain: $CF_Domain."
-            fi
-        else
-            LOGI "Skipping panel path setting."
-        fi
-    else
-        show_menu
     fi
 }
 
@@ -1821,11 +1347,11 @@ iplimit_remove_conflicts() {
 SSH_port_forwarding() {
     local URL_lists=(
         "https://api4.ipify.org"
-        "https://ipv4.icanhazip.com"
-        "https://v4.api.ipinfo.io/ip"
-        "https://ipv4.myexternalip.com/raw"
-        "https://4.ident.me"
-        "https://check-host.net/ip"
+		"https://ipv4.icanhazip.com"
+		"https://v4.api.ipinfo.io/ip"
+		"https://ipv4.myexternalip.com/raw"
+		"https://4.ident.me"
+		"https://check-host.net/ip"
     )
     local server_ip=""
     for ip_address in "${URL_lists[@]}"; do
@@ -1914,65 +1440,56 @@ show_usage() {
 │  ${blue}x-ui control menu usages (subcommands):${plain}                       │
 │                                                                │
 │  ${blue}x-ui${plain}                       - Admin Management Script          │
-│  ${blue}x-ui start${plain}                 - Start x-ui Panel                │
-│  ${blue}x-ui stop${plain}                  - Stop x-ui Panel                 │
-│  ${blue}x-ui restart${plain}               - Restart x-ui Panel              │
-│  ${blue}x-ui status${plain}                - Show Panel Status               │
-│  ${blue}x-ui settings${plain}              - Show Current Settings           │
-│  ${blue}x-ui enable${plain}                - Enable Autostart                │
-│  ${blue}x-ui disable${plain}               - Disable Autostart               │
-│  ${blue}x-ui log${plain}                   - Check System Logs               │
-│  ${blue}x-ui banlog${plain}                - Check Fail2ban Ban Logs         │
-│  ${blue}x-ui update${plain}                - Update Panel                    │
-│  ${blue}x-ui update-all-geofiles${plain}   - Update All Geo Files            │
-│  ${blue}x-ui legacy${plain}                - Install Legacy Version          │
-│  ${blue}x-ui install${plain}               - Install Panel                   │
-│  ${blue}x-ui uninstall${plain}             - Uninstall Panel                 │
+│  ${blue}x-ui start${plain}                 - Start                            │
+│  ${blue}x-ui stop${plain}                  - Stop                             │
+│  ${blue}x-ui restart${plain}               - Restart                          │
+│  ${blue}x-ui status${plain}                - Current Status                   │
+│  ${blue}x-ui settings${plain}              - Current Settings                 │
+│  ${blue}x-ui enable${plain}                - Enable Autostart on OS Startup   │
+│  ${blue}x-ui disable${plain}               - Disable Autostart on OS Startup  │
+│  ${blue}x-ui log${plain}                   - Check logs                       │
+│  ${blue}x-ui banlog${plain}                - Check Fail2ban ban logs          │
+│  ${blue}x-ui update${plain}                - Update                           │
+│  ${blue}x-ui update-all-geofiles${plain}   - Update all geo files             │
+│  ${blue}x-ui legacy${plain}                - Legacy version                   │
+│  ${blue}x-ui install${plain}               - Install                          │
+│  ${blue}x-ui uninstall${plain}             - Uninstall                        │
 └────────────────────────────────────────────────────────────────┘"
 }
 
 show_menu() {
     echo -e "
-╔══════════════════════════════════════════════════════════════╗
-║                     ${green}3X-UI Panel Management${plain}                    ║
-╠══════════════════════════════════════════════════════════════╣
-║  ${green}0.${plain} Exit Script                                           ║
-╠══════════════════════════════════════════════════════════════╣
-║                      ${yellow}Installation & Updates${plain}                 ║
-║  ${green}1.${plain} Install Panel                                        ║
-║  ${green}2.${plain} Update Panel                                         ║
-║  ${green}3.${plain} Update Menu Script                                   ║
-║  ${green}4.${plain} Install Legacy Version                               ║
-║  ${green}5.${plain} Uninstall Panel                                      ║
-╠══════════════════════════════════════════════════════════════╣
-║                      ${yellow}Panel Configuration${plain}                    ║
-║  ${green}6.${plain} Reset Username & Password                            ║
-║  ${green}7.${plain} Reset Web Base Path                                  ║
-║  ${green}8.${plain} Reset Panel Settings                                 ║
-║  ${green}9.${plain} Change Panel Port                                    ║
-║ ${green}10.${plain} View Current Settings                                ║
-╠══════════════════════════════════════════════════════════════╣
-║                      ${yellow}Service Management${plain}                     ║
-║ ${green}11.${plain} Start Panel                                          ║
-║ ${green}12.${plain} Stop Panel                                           ║
-║ ${green}13.${plain} Restart Panel                                        ║
-║ ${green}14.${plain} Check Panel Status                                   ║
-║ ${green}15.${plain} View System Logs                                     ║
-╠══════════════════════════════════════════════════════════════╣
-║                      ${yellow}Advanced Configuration${plain}                 ║
-║ ${green}16.${plain} Enable Autostart                                     ║
-║ ${green}17.${plain} Disable Autostart                                    ║
-║ ${green}18.${plain} SSL Certificate Management                           ║
-║ ${green}19.${plain} Cloudflare SSL Certificate                           ║
-║ ${green}20.${plain} IP Limit Management                                  ║
-║ ${green}21.${plain} Firewall Management                                  ║
-║ ${green}22.${plain} SSH Port Forwarding Management                       ║
-╠══════════════════════════════════════════════════════════════╣
-║                      ${yellow}System Optimization${plain}                    ║
-║ ${green}23.${plain} Enable BBR                                           ║
-║ ${green}24.${plain} Update Geo Files                                     ║
-║ ${green}25.${plain} Network Speed Test                                   ║
-╚══════════════════════════════════════════════════════════════╝
+╔────────────────────────────────────────────────╗
+│   ${green}3X-UI Panel Management Script${plain}                │
+│   ${green}0.${plain} Exit Script                               │
+│────────────────────────────────────────────────│
+│   ${green}1.${plain} Install                                   │
+│   ${green}2.${plain} Update                                    │
+│   ${green}3.${plain} Update Menu                               │
+│   ${green}4.${plain} Uninstall                                 │
+│────────────────────────────────────────────────│
+│   ${green}5.${plain} Reset Username & Password                 │
+│   ${green}6.${plain} Reset Web Base Path                       │
+│   ${green}7.${plain} Reset Settings                            │
+│   ${green}8.${plain} Change Port                               │
+│  ${green}9.${plain} View Current Settings                     │
+│────────────────────────────────────────────────│
+│  ${green}10.${plain} Start                                     │
+│  ${green}11.${plain} Stop                                      │
+│  ${green}12.${plain} Restart                                   │
+│  ${green}13.${plain} Check Status                              │
+│  ${green}14.${plain} Logs Management                           │
+│────────────────────────────────────────────────│
+│  ${green}15.${plain} Enable Autostart                          │
+│  ${green}16.${plain} Disable Autostart                         │
+│────────────────────────────────────────────────│
+│  ${green}17.${plain} IP Limit Management                       │
+│  ${green}18.${plain} SSH Port Forwarding Management            │
+│────────────────────────────────────────────────│
+│  ${green}19.${plain} Enable BBR                                │
+│  ${green}20.${plain} Update Geo Files                          │
+│  ${green}21.${plain} Speedtest by Ookla                        │
+╚────────────────────────────────────────────────╝
 "
     show_status
     echo && read -rp "Please enter your selection [0-25]: " num
@@ -1991,73 +1508,61 @@ show_menu() {
         check_install && update_menu
         ;;
     4)
-        check_install && legacy_version
-        ;;
-    5)
         check_install && uninstall
         ;;
-    6)
+    5)
         check_install && reset_user
         ;;
-    7)
+    6)
         check_install && reset_webbasepath
         ;;
-    8)
+    7)
         check_install && reset_config
         ;;
-    9)
+    8)
         check_install && set_port
         ;;
-    10)
+    9)
         check_install && check_config
         ;;
-    11)
+    10)
         check_install && start
         ;;
-    12)
+    11)
         check_install && stop
         ;;
-    13)
+    12)
         check_install && restart
         ;;
-    14)
+    13)
         check_install && status
         ;;
-    15)
+    14)
         check_install && show_log
         ;;
-    16)
+    15)
         check_install && enable
         ;;
-    17)
+    16)
         check_install && disable
         ;;
-    18)
-        ssl_cert_issue_main
-        ;;
-    19)
-        ssl_cert_issue_CF
-        ;;
-    20)
+    17)
         iplimit_main
         ;;
-    21)
-        firewall_menu
-        ;;
-    22)
+    18)
         SSH_port_forwarding
         ;;
-    23)
+    19)
         bbr_menu
         ;;
-    24)
+    20)
         update_geo
         ;;
-    25)
+    21)
         run_speedtest
         ;;
     *)
-        LOGE "Please enter the correct number [0-25]"
+        LOGE "Please enter the correct number [0-21]"
         ;;
     esac
 }
@@ -2093,9 +1598,6 @@ if [[ $# > 0 ]]; then
         ;;
     "update")
         check_install 0 && update 0
-        ;;
-    "legacy")
-        check_install 0 && legacy_version 0
         ;;
     "install")
         check_uninstall 0 && install 0
