@@ -110,34 +110,28 @@ show_config_form() {
     SUB_PORT=$(gum input --placeholder "Subscription Port" --value "${SUB_PORT:-2096}")
     
     echo ""
+    gum style --foreground 86 "🌐 Domain Configuration:"
+    PANEL_DOMAIN=$(gum input --placeholder "Panel Domain (e.g., panel.example.com)" --value "$PANEL_DOMAIN")
+    SUB_DOMAIN=$(gum input --placeholder "Subscription Domain (e.g., sub.example.com)" --value "$SUB_DOMAIN")
+    
+    echo ""
     gum style --foreground 86 "⚡ Options:"
     
-    # Use gum choose for options - исправленная часть
-    selected=$(gum choose --no-limit \
-        "Use Caddy Reverse Proxy (SSL/TLS)" \
-        "Create Default VLESS Reality Inbound")
-    
-    # Parse selections - исправленная часть
-    USE_CADDY="false"
-    CREATE_DEFAULT_INBOUND="false"
-    
-    # Проверяем, есть ли выбор в списке
-    if echo "$selected" | grep -q "Caddy"; then
+    # Use gum confirm for independent options
+    if gum confirm "Use Caddy Reverse Proxy (SSL/TLS)?"; then
         USE_CADDY="true"
+    else
+        USE_CADDY="false"
     fi
     
-    if echo "$selected" | grep -q "VLESS"; then
+    if gum confirm "Create Default VLESS Reality Inbound?"; then
         CREATE_DEFAULT_INBOUND="true"
+    else
+        CREATE_DEFAULT_INBOUND="false"
     fi
     
-    # If Caddy is enabled, ask for domains
+    # If Caddy is enabled, validate domains
     if [[ "$USE_CADDY" == "true" ]]; then
-        echo ""
-        gum style --foreground 86 "🌐 Caddy Domain Configuration:"
-        PANEL_DOMAIN=$(gum input --placeholder "Panel Domain (e.g., panel.example.com)" --value "$PANEL_DOMAIN")
-        SUB_DOMAIN=$(gum input --placeholder "Subscription Domain (e.g., sub.example.com)" --value "$SUB_DOMAIN")
-        
-        # Validate domains
         if [[ -z "$PANEL_DOMAIN" ]]; then
             gum style --foreground 196 "❌ Panel Domain is required when Caddy is enabled!"
             sleep 2
@@ -172,9 +166,9 @@ show_config_form() {
     gum style --foreground 250 "  Password: ${XUI_PASSWORD:0:4}***${XUI_PASSWORD: -4}"
     gum style --foreground 250 "  Panel Port: $PANEL_PORT"
     gum style --foreground 250 "  Subscription Port: $SUB_PORT"
+    gum style --foreground 250 "  Panel Domain: $PANEL_DOMAIN"
+    gum style --foreground 250 "  Sub Domain: $SUB_DOMAIN"
     [[ "$USE_CADDY" == "true" ]] && gum style --foreground 250 "  ✓ Caddy Enabled"
-    [[ "$USE_CADDY" == "true" ]] && gum style --foreground 250 "    Panel Domain: $PANEL_DOMAIN"
-    [[ "$USE_CADDY" == "true" ]] && gum style --foreground 250 "    Sub Domain: $SUB_DOMAIN"
     [[ "$CREATE_DEFAULT_INBOUND" == "true" ]] && gum style --foreground 250 "  ✓ VLESS Reality Inbound"
     
     echo ""
