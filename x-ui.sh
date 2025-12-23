@@ -1,5 +1,5 @@
 #!/bin/bash
-
+#
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -262,16 +262,29 @@ check_config() {
         server_ip=$(curl -s --max-time 3 https://4.ident.me)
     fi
 
-    if [[ -n "$existing_cert" ]]; then
-        local domain=$(basename "$(dirname "$existing_cert")")
+    # Check if Caddy is installed and configured
+    local caddy_configured=false
+    local panel_domain=""
+    
+    if [[ -f /etc/caddy/Caddyfile ]]; then
+        # Extract domain from Caddyfile
+        panel_domain=$(grep -E "^[^#]*:8443" /etc/caddy/Caddyfile | head -1 | awk '{print $1}' | sed 's/:8443//')
+        if [[ -n "$panel_domain" ]]; then
+            caddy_configured=true
+        fi
+    fi
 
+    if [[ "$caddy_configured" == "true" ]]; then
+        echo -e "${green}Access URL (via Caddy): https://${panel_domain}:8443${existing_webBasePath}${plain}"
+    elif [[ -n "$existing_cert" ]]; then
+        local domain=$(basename "$(dirname "$existing_cert")")
         if [[ "$domain" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-            echo -e "${green}Access URL: https://${domain}:${existing_port}${existing_webBasePath}${plain}"
+            echo -e "${green}Access URL (SSL): https://${domain}:${existing_port}${existing_webBasePath}${plain}"
         else
-            echo -e "${green}Access URL: https://${server_ip}:${existing_port}${existing_webBasePath}${plain}"
+            echo -e "${green}Access URL (SSL): https://${server_ip}:${existing_port}${existing_webBasePath}${plain}"
         fi
     else
-        echo -e "${green}Access URL: http://${server_ip}:${existing_port}${existing_webBasePath}${plain}"
+        echo -e "${green}Access URL (HTTP): http://${server_ip}:${existing_port}${existing_webBasePath}${plain}"
     fi
 }
 
@@ -522,7 +535,7 @@ enable_bbr() {
     arch | manjaro | parch)
         pacman -Sy --noconfirm ca-certificates
         ;;
-	opensuse-tumbleweed | opensuse-leap)
+    opensuse-tumbleweed | opensuse-leap)
         zypper refresh && zypper -q install -y ca-certificates
         ;;
     alpine)
@@ -874,18 +887,18 @@ update_all_geofiles() {
 }
 
 update_main_geofiles() {
-        wget -O geoip.dat       https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
-        wget -O geosite.dat     https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat
+        wget -O /usr/local/x-ui/bin/geoip.dat       https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
+        wget -O /usr/local/x-ui/bin/geosite.dat     https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat
 }
 
 update_ir_geofiles() {
-        wget -O geoip_IR.dat    https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geoip.dat
-        wget -O geosite_IR.dat  https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geosite.dat
+        wget -O /usr/local/x-ui/bin/geoip_IR.dat    https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geoip.dat
+        wget -O /usr/local/x-ui/bin/geosite_IR.dat  https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geosite.dat
 }
 
 update_ru_geofiles() {
-        wget -O geoip_RU.dat    https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geoip.dat
-        wget -O geosite_RU.dat  https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat
+        wget -O /usr/local/x-ui/bin/geoip_RU.dat    https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geoip.dat
+        wget -O /usr/local/x-ui/bin/geosite_RU.dat  https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat
 }
 
 update_geo() {
@@ -1090,7 +1103,7 @@ ssl_cert_issue() {
     arch | manjaro | parch)
         pacman -Sy --noconfirm socat
         ;;
-	opensuse-tumbleweed | opensuse-leap)
+    opensuse-tumbleweed | opensuse-leap)
         zypper refresh && zypper -q install -y socat
         ;;
     alpine)
@@ -1803,11 +1816,11 @@ iplimit_remove_conflicts() {
 SSH_port_forwarding() {
     local URL_lists=(
         "https://api4.ipify.org"
-		"https://ipv4.icanhazip.com"
-		"https://v4.api.ipinfo.io/ip"
-		"https://ipv4.myexternalip.com/raw"
-		"https://4.ident.me"
-		"https://check-host.net/ip"
+        "https://ipv4.icanhazip.com"
+        "https://v4.api.ipinfo.io/ip"
+        "https://ipv4.myexternalip.com/raw"
+        "https://4.ident.me"
+        "https://check-host.net/ip"
     )
     local server_ip=""
     for ip_address in "${URL_lists[@]}"; do
@@ -1896,60 +1909,65 @@ show_usage() {
 │  ${blue}x-ui control menu usages (subcommands):${plain}                       │
 │                                                                │
 │  ${blue}x-ui${plain}                       - Admin Management Script          │
-│  ${blue}x-ui start${plain}                 - Start                            │
-│  ${blue}x-ui stop${plain}                  - Stop                             │
-│  ${blue}x-ui restart${plain}               - Restart                          │
-│  ${blue}x-ui status${plain}                - Current Status                   │
-│  ${blue}x-ui settings${plain}              - Current Settings                 │
-│  ${blue}x-ui enable${plain}                - Enable Autostart on OS Startup   │
-│  ${blue}x-ui disable${plain}               - Disable Autostart on OS Startup  │
-│  ${blue}x-ui log${plain}                   - Check logs                       │
-│  ${blue}x-ui banlog${plain}                - Check Fail2ban ban logs          │
-│  ${blue}x-ui update${plain}                - Update                           │
-│  ${blue}x-ui update-all-geofiles${plain}   - Update all geo files             │
-│  ${blue}x-ui legacy${plain}                - Legacy version                   │
-│  ${blue}x-ui install${plain}               - Install                          │
-│  ${blue}x-ui uninstall${plain}             - Uninstall                        │
+│  ${blue}x-ui start${plain}                 - Start x-ui Panel                │
+│  ${blue}x-ui stop${plain}                  - Stop x-ui Panel                 │
+│  ${blue}x-ui restart${plain}               - Restart x-ui Panel              │
+│  ${blue}x-ui status${plain}                - Show Panel Status               │
+│  ${blue}x-ui settings${plain}              - Show Current Settings           │
+│  ${blue}x-ui enable${plain}                - Enable Autostart                │
+│  ${blue}x-ui disable${plain}               - Disable Autostart               │
+│  ${blue}x-ui log${plain}                   - Check System Logs               │
+│  ${blue}x-ui banlog${plain}                - Check Fail2ban Ban Logs         │
+│  ${blue}x-ui update${plain}                - Update Panel                    │
+│  ${blue}x-ui update-all-geofiles${plain}   - Update All Geo Files            │
+│  ${blue}x-ui legacy${plain}                - Install Legacy Version          │
+│  ${blue}x-ui install${plain}               - Install Panel                   │
+│  ${blue}x-ui uninstall${plain}             - Uninstall Panel                 │
 └────────────────────────────────────────────────────────────────┘"
 }
 
 show_menu() {
     echo -e "
-╔────────────────────────────────────────────────╗
-│   ${green}3X-UI Panel Management Script${plain}                │
-│   ${green}0.${plain} Exit Script                               │
-│────────────────────────────────────────────────│
-│   ${green}1.${plain} Install                                   │
-│   ${green}2.${plain} Update                                    │
-│   ${green}3.${plain} Update Menu                               │
-│   ${green}4.${plain} Legacy Version                            │
-│   ${green}5.${plain} Uninstall                                 │
-│────────────────────────────────────────────────│
-│   ${green}6.${plain} Reset Username & Password                 │
-│   ${green}7.${plain} Reset Web Base Path                       │
-│   ${green}8.${plain} Reset Settings                            │
-│   ${green}9.${plain} Change Port                               │
-│  ${green}10.${plain} View Current Settings                     │
-│────────────────────────────────────────────────│
-│  ${green}11.${plain} Start                                     │
-│  ${green}12.${plain} Stop                                      │
-│  ${green}13.${plain} Restart                                   │
-│  ${green}14.${plain} Check Status                              │
-│  ${green}15.${plain} Logs Management                           │
-│────────────────────────────────────────────────│
-│  ${green}16.${plain} Enable Autostart                          │
-│  ${green}17.${plain} Disable Autostart                         │
-│────────────────────────────────────────────────│
-│  ${green}18.${plain} SSL Certificate Management                │
-│  ${green}19.${plain} Cloudflare SSL Certificate                │
-│  ${green}20.${plain} IP Limit Management                       │
-│  ${green}21.${plain} Firewall Management                       │
-│  ${green}22.${plain} SSH Port Forwarding Management            │
-│────────────────────────────────────────────────│
-│  ${green}23.${plain} Enable BBR                                │
-│  ${green}24.${plain} Update Geo Files                          │
-│  ${green}25.${plain} Speedtest by Ookla                        │
-╚────────────────────────────────────────────────╝
+╔══════════════════════════════════════════════════════════════╗
+║                     ${green}3X-UI Panel Management${plain}                    ║
+╠══════════════════════════════════════════════════════════════╣
+║  ${green}0.${plain} Exit Script                                           ║
+╠══════════════════════════════════════════════════════════════╣
+║                      ${yellow}Installation & Updates${plain}                 ║
+║  ${green}1.${plain} Install Panel                                        ║
+║  ${green}2.${plain} Update Panel                                         ║
+║  ${green}3.${plain} Update Menu Script                                   ║
+║  ${green}4.${plain} Install Legacy Version                               ║
+║  ${green}5.${plain} Uninstall Panel                                      ║
+╠══════════════════════════════════════════════════════════════╣
+║                      ${yellow}Panel Configuration${plain}                    ║
+║  ${green}6.${plain} Reset Username & Password                            ║
+║  ${green}7.${plain} Reset Web Base Path                                  ║
+║  ${green}8.${plain} Reset Panel Settings                                 ║
+║  ${green}9.${plain} Change Panel Port                                    ║
+║ ${green}10.${plain} View Current Settings                                ║
+╠══════════════════════════════════════════════════════════════╣
+║                      ${yellow}Service Management${plain}                     ║
+║ ${green}11.${plain} Start Panel                                          ║
+║ ${green}12.${plain} Stop Panel                                           ║
+║ ${green}13.${plain} Restart Panel                                        ║
+║ ${green}14.${plain} Check Panel Status                                   ║
+║ ${green}15.${plain} View System Logs                                     ║
+╠══════════════════════════════════════════════════════════════╣
+║                      ${yellow}Advanced Configuration${plain}                 ║
+║ ${green}16.${plain} Enable Autostart                                     ║
+║ ${green}17.${plain} Disable Autostart                                    ║
+║ ${green}18.${plain} SSL Certificate Management                           ║
+║ ${green}19.${plain} Cloudflare SSL Certificate                           ║
+║ ${green}20.${plain} IP Limit Management                                  ║
+║ ${green}21.${plain} Firewall Management                                  ║
+║ ${green}22.${plain} SSH Port Forwarding Management                       ║
+╠══════════════════════════════════════════════════════════════╣
+║                      ${yellow}System Optimization${plain}                    ║
+║ ${green}23.${plain} Enable BBR                                           ║
+║ ${green}24.${plain} Update Geo Files                                     ║
+║ ${green}25.${plain} Network Speed Test                                   ║
+╚══════════════════════════════════════════════════════════════╝
 "
     show_status
     echo && read -rp "Please enter your selection [0-25]: " num
