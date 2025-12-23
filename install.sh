@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#######################
+#
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -83,10 +83,15 @@ show_welcome() {
     gum style --foreground 86 "Features:"
     gum style --foreground 250 "  • Automatic configuration"
     gum style --foreground 250 "  • SSL/TLS support with Caddy"
+    gum style --foreground 250 "  • VLESS Reality inbound creation"
     gum style --foreground 250 "  • Beautiful modern interface"
     
     echo ""
     gum confirm "Ready to start installation?" || exit 0
+}
+
+trim_spaces() {
+    echo "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
 }
 
 # Configuration form
@@ -99,13 +104,13 @@ show_config_form() {
     
     echo ""
     gum style --foreground 86 "📋 Credentials (leave empty for auto-generation):"
-    XUI_USERNAME=$(gum input --placeholder "Username" --value "$XUI_USERNAME" | xargs)
-    XUI_PASSWORD=$(gum input --placeholder "Password" --password --value "$XUI_PASSWORD" | xargs)
-    
+    XUI_USERNAME=$(trim_spaces "$(gum input --placeholder "Username" --value "$XUI_USERNAME")")
+XUI_PASSWORD=$(trim_spaces "$(gum input --placeholder "Password" --password --value "$XUI_PASSWORD")")
+
     echo ""
     gum style --foreground 86 "🔌 Port Configuration:"
-    PANEL_PORT=$(gum input --placeholder "Panel Port" --value "${PANEL_PORT:-8080}" | xargs)
-    SUB_PORT=$(gum input --placeholder "Subscription Port" --value "${SUB_PORT:-2096}" | xargs)
+    PANEL_PORT=$(trim_spaces "$(gum input --placeholder "Panel Port" --value "${PANEL_PORT:-8080}")")
+    SUB_PORT=$(trim_spaces "$(gum input --placeholder "Subscription Port" --value "${SUB_PORT:-2096}")")
     
     echo ""
     gum style --foreground 86 "⚡ Options:"
@@ -115,9 +120,9 @@ show_config_form() {
         USE_CADDY="true"
         echo ""
         gum style --foreground 86 "🌐 Caddy Domain Configuration:"
-        PANEL_DOMAIN=$(gum input --placeholder "Panel Domain (e.g., panel.example.com)" --value "$PANEL_DOMAIN" | xargs)
-        SUB_DOMAIN=$(gum input --placeholder "Subscription Domain (e.g., sub.example.com)" --value "$SUB_DOMAIN" | xargs)
-        
+        PANEL_DOMAIN=$(trim_spaces "$(gum input --placeholder "Panel Domain (panel.example.com)" --value "$PANEL_DOMAIN")")
+        SUB_DOMAIN=$(trim_spaces "$(gum input --placeholder "Subscription Domain (e.g., sub.example.com)" --value "$SUB_DOMAIN")")
+
         # Validate domains IMMEDIATELY
         if [[ -z "$PANEL_DOMAIN" ]]; then
             gum style --foreground 196 "❌ Panel Domain is required when Caddy is enabled!"
@@ -290,7 +295,7 @@ install_3xui() {
     
     # Show spinner while installation is running
     local pid=$!
-    # gum spin --spinner dot --title "Installing 3X-UI..." -- bash -c "while kill -0 $pid 2>/dev/null; do sleep 1; done"
+    gum spin --spinner dot --title "Installing 3X-UI..." -- bash -c "while kill -0 $pid 2>/dev/null; do sleep 1; done"
     
     # Check if installation was successful
     wait $pid
@@ -463,6 +468,11 @@ main() {
     
     show_welcome
     show_config_form
+
+    for var in XUI_USERNAME XUI_PASSWORD PANEL_PORT SUB_PORT PANEL_DOMAIN SUB_DOMAIN; do
+        eval "$var=\"\$(trim_spaces \"\${$var}\")\""
+    done
+
     
     install_base
     install_3xui
