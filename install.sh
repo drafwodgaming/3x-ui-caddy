@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#
+###
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -673,7 +673,7 @@ show_summary() {
         summary+="│                                                       │\n"
         summary+="│  \Z1Subscription:\Zn                                      │\n"
         summary+="│    \Z6https://${SUB_DOMAIN}:8443/\Zn\n"
-else
+    else
         summary+="│  \Z1Panel (HTTP):\Zn                                      │\n"
         summary+="│    \Z6http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}\Zn\n"
     fi
