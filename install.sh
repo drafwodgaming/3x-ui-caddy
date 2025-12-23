@@ -145,17 +145,17 @@ install_3xui() {
     
     cd /usr/local/
     
-    tag_version=$(curl -Ls "https://api.github.com/repos/MHSanaei/3x-ui/releases/latest" \
+    tag_version=$(curl -Ls "https://api.github.com/repos/drafwodgaming/3x-ui-caddy/releases/latest" \
         | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
     [[ ! -n "$tag_version" ]] && echo -e "${red}✗ Failed to fetch version${plain}" && exit 1
     
     wget --inet4-only -q -O /usr/local/x-ui-linux-$(arch).tar.gz \
-        https://github.com/MHSanaei/3x-ui/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz
+        https://github.com/drafwodgaming/3x-ui-caddy/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz
     
     [[ $? -ne 0 ]] && echo -e "${red}✗ Download failed${plain}" && exit 1
     
     wget --inet4-only -q -O /usr/bin/x-ui-temp \
-        https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.sh
+        https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/main/x-ui.sh
     
     if [[ -e /usr/local/x-ui/ ]]; then
         systemctl stop x-ui 2>/dev/null || true
