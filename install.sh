@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-##
+
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -57,7 +57,6 @@ gpgkey=https://repo.charm.sh/yum/gpg.key' | tee /etc/yum.repos.d/charm.repo
                 yum install -y gum
             ;;
             *)
-                # Fallback to binary installation
                 arch_type=$(arch)
                 if [[ "$arch_type" == "amd64" ]]; then
                     wget -q https://github.com/charmbracelet/gum/releases/download/v0.14.5/gum_0.14.5_linux_amd64.tar.gz
@@ -115,7 +114,6 @@ show_config_form() {
     # Ask about Caddy FIRST
     if gum confirm "Use Caddy Reverse Proxy (SSL/TLS)?"; then
         USE_CADDY="true"
-        # NOW show the domain inputs because Caddy is selected
         echo ""
         gum style --foreground 86 "🌐 Caddy Domain Configuration:"
         PANEL_DOMAIN=$(gum input --placeholder "Panel Domain (e.g., panel.example.com)" --value "$PANEL_DOMAIN" | xargs)
@@ -125,19 +123,18 @@ show_config_form() {
         if [[ -z "$PANEL_DOMAIN" ]]; then
             gum style --foreground 196 "❌ Panel Domain is required when Caddy is enabled!"
             sleep 2
-            show_config_form # Restart the form
+            show_config_form
             return
         fi
         
         if [[ -z "$SUB_DOMAIN" ]]; then
             gum style --foreground 196 "❌ Subscription Domain is required when Caddy is enabled!"
             sleep 2
-            show_config_form # Restart the form
+            show_config_form
             return
         fi
     else
         USE_CADDY="false"
-        # Domains are not needed, so ensure they are empty if they had values from a previous run
         PANEL_DOMAIN=""
         SUB_DOMAIN=""
     fi
@@ -153,6 +150,7 @@ show_config_form() {
     if [[ -z "$XUI_USERNAME" ]]; then
         XUI_USERNAME=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 10 | head -n 1)
     fi
+
     if [[ -z "$XUI_PASSWORD" ]]; then
         length=$((20 + RANDOM % 11))
         XUI_PASSWORD=$(LC_ALL=C tr -dc 'a-zA-Z0-9!@#$%^&*()_+-=' </dev/urandom | fold -w $length | head -n 1)
@@ -180,8 +178,6 @@ show_config_form() {
 install_base() {
     clear
     gum style --foreground 212 "📦 Installing base dependencies..."
-    
-    # Create a temporary log file to capture output
     local log_file="/tmp/install_base.log"
     
     # Run the installation in background while showing spinner
@@ -231,8 +227,6 @@ install_base() {
 install_3xui() {
     clear
     gum style --foreground 212 "🚀 Installing 3X-UI..."
-    
-    # Create a temporary log file to capture output
     local log_file="/tmp/install_3xui.log"
     
     # Fetch latest version
@@ -328,8 +322,6 @@ install_3xui() {
 install_caddy() {
     clear
     gum style --foreground 212 "🔐 Installing Caddy..."
-    
-    # Create a temporary log file to capture output
     local log_file="/tmp/install_caddy.log"
     
     # Run the installation in background while showing spinner
@@ -377,8 +369,6 @@ install_caddy() {
 configure_caddy() {
     clear
     gum style --foreground 212 "⚙️  Configuring Caddy..."
-    
-    # Create a temporary log file to capture output
     local log_file="/tmp/configure_caddy.log"
     
     # Run the configuration in background while showing spinner
@@ -485,8 +475,8 @@ generate_reality_keys() {
 
 create_vless_reality_inbound() {
     REALITY_PORT=443
-    REALITY_SNI="www.google.com"
-    REALITY_DEST="www.google.com:443"
+    REALITY_SNI="web.max.ru"
+    REALITY_DEST="web.max.ru:443"
     CLIENT_EMAIL="user"
     
     CLIENT_UUID=$(generate_uuid)
@@ -513,8 +503,10 @@ create_vless_reality_inbound() {
         --arg dest "$REALITY_DEST" \
         --arg sni "$REALITY_SNI" \
         --arg privkey "$REALITY_PRIVATE_KEY" \
+        --arg publickey "$REALITY_PUBLIC_KEY" \
         --arg shortid "$SHORT_ID" \
         --arg remark "VLESS-Reality-Vision" \
+        --arg subId "uservlessrealityvision" \
         '{
             enable: true,
             port: $port,
@@ -530,7 +522,7 @@ create_vless_reality_inbound() {
                         expiryTime: 0, 
                         enable: true, 
                         tgId: "", 
-                        subId: "" 
+                        subId: $subId 
                     }],
                     decryption: "none",
                     fallbacks: []
@@ -542,14 +534,16 @@ create_vless_reality_inbound() {
                     security: "reality",
                     realitySettings: {
                         show: false,
-                        dest: $dest,
                         xver: 0,
+                        dest: $dest,
                         serverNames: [$sni],
                         privateKey: $privkey,
+                        publicKey: $publickey,
                         minClientVer: "",
                         maxClientVer: "",
                         maxTimeDiff: 0,
                         shortIds: [$shortid]
+                        fingerprint: "chrome"
                     },
                     tcpSettings: { 
                         acceptProxyProtocol: false, 
