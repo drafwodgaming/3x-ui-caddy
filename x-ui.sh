@@ -507,7 +507,7 @@ enable_bbr() {
     arch | manjaro | parch)
         pacman -Sy --noconfirm ca-certificates
         ;;
-	opensuse-tumbleweed | opensuse-leap)
+    opensuse-tumbleweed | opensuse-leap)
         zypper refresh && zypper -q install -y ca-certificates
         ;;
     alpine)
@@ -777,7 +777,7 @@ ssl_cert_issue() {
     arch | manjaro | parch)
         pacman -Sy --noconfirm socat
         ;;
-	opensuse-tumbleweed | opensuse-leap)
+    opensuse-tumbleweed | opensuse-leap)
         zypper refresh && zypper -q install -y socat
         ;;
     alpine)
@@ -1347,11 +1347,11 @@ iplimit_remove_conflicts() {
 SSH_port_forwarding() {
     local URL_lists=(
         "https://api4.ipify.org"
-		"https://ipv4.icanhazip.com"
-		"https://v4.api.ipinfo.io/ip"
-		"https://ipv4.myexternalip.com/raw"
-		"https://4.ident.me"
-		"https://check-host.net/ip"
+        "https://ipv4.icanhazip.com"
+        "https://v4.api.ipinfo.io/ip"
+        "https://ipv4.myexternalip.com/raw"
+        "https://4.ident.me"
+        "https://check-host.net/ip"
     )
     local server_ip=""
     for ip_address in "${URL_lists[@]}"; do
@@ -1435,6 +1435,83 @@ SSH_port_forwarding() {
     esac
 }
 
+caddy_menu() {
+    echo -e "\n${green}Caddy Management${plain}"
+    echo -e "${green}\t1.${plain} View Caddy Status"
+    echo -e "${green}\t2.${plain} Edit Caddyfile"
+    echo -e "${green}\t3.${plain} Restart Caddy"
+    echo -e "${green}\t4.${plain} Validate Configuration"
+    echo -e "${green}\t5.${plain} View Caddy Logs"
+    echo -e "${green}\t0.${plain} Back to Main Menu"
+    read -rp "Choose an option: " choice
+    
+    case "$choice" in
+        0)
+            show_menu
+            ;;
+        1)
+            echo -e "${green}Checking Caddy status...${plain}\n"
+            if systemctl status caddy -l --no-pager 2>/dev/null; then
+                echo -e "${green}Caddy is running.${plain}"
+            else
+                echo -e "${red}Caddy is not installed, stopped, or failed to start.${plain}"
+            fi
+            caddy_menu
+            ;;
+        2)
+            if [ ! -f /etc/caddy/Caddyfile ]; then
+                echo -e "${red}Caddyfile not found at /etc/caddy/Caddyfile${plain}"
+            else
+                echo -e "${yellow}Opening /etc/caddy/Caddyfile...${plain}"
+                # Try to find a suitable editor
+                if command -v nano &>/dev/null; then
+                    nano /etc/caddy/Caddyfile
+                elif command -v vi &>/dev/null; then
+                    vi /etc/caddy/Caddyfile
+                else
+                    echo -e "${red}No text editor found (nano/vi). Please install one.${plain}"
+                fi
+            fi
+            caddy_menu
+            ;;
+        3)
+            echo -e "${yellow}Restarting Caddy...${plain}"
+            systemctl restart caddy
+            if [ $? -eq 0 ]; then
+                echo -e "${green}Caddy restarted successfully.${plain}"
+            else
+                echo -e "${red}Failed to restart Caddy. Run 'journalctl -u caddy' to check logs.${plain}"
+            fi
+            caddy_menu
+            ;;
+        4)
+             if [ ! -f /etc/caddy/Caddyfile ]; then
+                echo -e "${red}Caddyfile not found at /etc/caddy/Caddyfile${plain}"
+            elif ! command -v caddy &>/dev/null; then
+                echo -e "${red}Caddy binary not found. Is it installed?${plain}"
+            else
+                echo -e "${yellow}Validating Caddyfile...${plain}"
+                caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+                if [ $? -eq 0 ]; then
+                     echo -e "${green}Configuration is valid.${plain}"
+                else
+                     echo -e "${red}Configuration errors detected.${plain}"
+                fi
+            fi
+            caddy_menu
+            ;;
+        5)
+            echo -e "${green}Showing Caddy logs (press Ctrl+C to exit)...${plain}"
+            journalctl -u caddy -e --no-pager
+            caddy_menu
+            ;;
+        *)
+            echo -e "${red}Invalid option. Please select a valid number.${plain}"
+            caddy_menu
+            ;;
+    esac
+}
+
 show_usage() {
     echo -e "┌────────────────────────────────────────────────────────────────┐
 │  ${blue}x-ui control menu usages (subcommands):${plain}                       │
@@ -1489,10 +1566,11 @@ show_menu() {
 │  ${green}19.${plain} Enable BBR                                │
 │  ${green}20.${plain} Update Geo Files                          │
 │  ${green}21.${plain} Speedtest by Ookla                        │
-╚────────────────────────────────────────────────╝
+│  ${green}22.${plain} Caddy Management                          │
+╚════════════════════════════════════════════════╝
 "
     show_status
-    echo && read -rp "Please enter your selection [0-25]: " num
+    echo && read -rp "Please enter your selection [0-22]: " num
 
     case "${num}" in
     0)
@@ -1561,8 +1639,11 @@ show_menu() {
     21)
         run_speedtest
         ;;
+    22)
+        caddy_menu
+        ;;
     *)
-        LOGE "Please enter the correct number [0-21]"
+        LOGE "Please enter the correct number [0-22]"
         ;;
     esac
 }
@@ -1607,6 +1688,9 @@ if [[ $# > 0 ]]; then
         ;;
     "update-all-geofiles")
         check_install 0 && update_all_geofiles 0 && restart 0
+        ;;
+    "caddy")
+        caddy_menu
         ;;
     *) show_usage ;;
     esac
