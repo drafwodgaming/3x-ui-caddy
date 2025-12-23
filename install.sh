@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-
+#
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -60,142 +60,194 @@ install_dialog() {
     fi
 }
 
-read_credentials() {
+# Show configuration form
+show_config_form() {
+    while true; do
+        exec 3>&1
+        selection=$(dialog \
+            --backtitle "╔═══════════════════════════════════════════════════════════════════╗" \
+            --title "┤ 3X-UI + CADDY INSTALLER ├" \
+            --colors \
+            --ok-label "Install" \
+            --cancel-label "Exit" \
+            --extra-button \
+            --extra-label "Toggle Options" \
+            --form "\n\Z4✦ Configuration Settings ✦\Zn\n\nUse arrows to navigate, TAB to switch fields" \
+            22 78 10 \
+            "\Z1┌─ Credentials ──────────────────────────────────────┐\Zn" 1  1 "" 1  1 0  0 \
+            "  Username (empty = auto):"                            2  3 "$XUI_USERNAME" 2  30 40 0 \
+            "  Password (empty = auto):"                            3  3 "$XUI_PASSWORD" 3  30 40 0 \
+            "\Z1└────────────────────────────────────────────────────┘\Zn" 4  1 "" 4  1 0  0 \
+            "" 5 1 "" 5 1 0 0 \
+            "\Z1┌─ Ports ────────────────────────────────────────────┐\Zn" 6  1 "" 6  1 0  0 \
+            "  Panel Port:"                                          7  3 "${PANEL_PORT:-8080}" 7  30 40 0 \
+            "  Subscription Port:"                                   8  3 "${SUB_PORT:-2096}" 8  30 40 0 \
+            "\Z1└────────────────────────────────────────────────────┘\Zn" 9  1 "" 9  1 0  0 \
+            "" 10 1 "" 10 1 0 0 \
+            "\Z1┌─ Caddy Domains (if enabled) ──────────────────────┐\Zn" 11 1 "" 11 1 0  0 \
+            "  Panel Domain:"                                        12 3 "$PANEL_DOMAIN" 12 30 40 0 \
+            "  Subscription Domain:"                                 13 3 "$SUB_DOMAIN" 13 30 40 0 \
+            "\Z1└────────────────────────────────────────────────────┘\Zn" 14 1 "" 14 1 0  0 \
+            "" 15 1 "" 15 1 0 0 \
+            "\Z2┌─ Options ──────────────────────────────────────────┐\Zn" 16 1 "" 16 1 0  0 \
+            "  ${USE_CADDY_SYMBOL} Use Caddy Reverse Proxy (SSL/TLS)" 17 3 "" 17 30 0 0 \
+            "  ${CREATE_INBOUND_SYMBOL} Create Default VLESS Reality Inbound" 18 3 "" 18 30 0 0 \
+            "\Z2└────────────────────────────────────────────────────┘\Zn" 19 1 "" 19 1 0  0 \
+            2>&1 1>&3)
+        
+        exit_status=$?
+        exec 3>&-
+        
+        # Handle button press
+        case $exit_status in
+            0)  # OK button (Install)
+                # Parse form data
+                XUI_USERNAME=$(echo "$selection" | sed -n 1p)
+                XUI_PASSWORD=$(echo "$selection" | sed -n 2p)
+                PANEL_PORT=$(echo "$selection" | sed -n 3p)
+                SUB_PORT=$(echo "$selection" | sed -n 4p)
+                PANEL_DOMAIN=$(echo "$selection" | sed -n 5p)
+                SUB_DOMAIN=$(echo "$selection" | sed -n 6p)
+                
+                # Validate
+                if [[ "$USE_CADDY" == "true" && -z "$PANEL_DOMAIN" ]]; then
+                    dialog --title "⚠ Validation Error" \
+                        --backtitle "╔═══════════════════════════════════════════════════════════════════╗" \
+                        --colors \
+                        --msgbox "\n\Z1Panel Domain is required when Caddy is enabled!\Zn" 8 50
+                    continue
+                fi
+                
+                if [[ "$USE_CADDY" == "true" && -z "$SUB_DOMAIN" ]]; then
+                    dialog --title "⚠ Validation Error" \
+                        --backtitle "╔═══════════════════════════════════════════════════════════════════╗" \
+                        --colors \
+                        --msgbox "\n\Z1Subscription Domain is required when Caddy is enabled!\Zn" 8 50
+                    continue
+                fi
+                
+                # Generate credentials if empty
+                if [[ -z "$XUI_USERNAME" ]]; then
+                    XUI_USERNAME=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 10 | head -n 1)
+                fi
+                if [[ -z "$XUI_PASSWORD" ]]; then
+                    length=$((20 + RANDOM % 11))
+                    XUI_PASSWORD=$(LC_ALL=C tr -dc 'a-zA-Z0-9!@#$%^&*()_+-=' </dev/urandom | fold -w $length | head -n 1)
+                fi
+                
+                # Set defaults
+                PANEL_PORT=${PANEL_PORT:-8080}
+                SUB_PORT=${SUB_PORT:-2096}
+                
+                return 0
+                ;;
+            1)  # Cancel button (Exit)
+                clear
+                exit 0
+                ;;
+            3)  # Extra button (Toggle Options)
+                show_options_menu
+                ;;
+            255) # ESC key
+                clear
+                exit 0
+                ;;
+        esac
+    done
+}
+
+# Toggle options menu
+show_options_menu() {
     exec 3>&1
-    values=$(dialog --title "Panel Credentials" \
-        --backtitle "3X-UI + CADDY INSTALLER" \
-        --form "Enter credentials (leave empty to auto-generate):" 12 60 2 \
-        "Username:" 1 1 "" 1 15 40 0 \
-        "Password:" 2 1 "" 2 15 40 0 \
+    selection=$(dialog \
+        --backtitle "╔═══════════════════════════════════════════════════════════════════╗" \
+        --title "┤ Toggle Options ├" \
+        --colors \
+        --checklist "\n\Z4Select features to enable:\Zn\n\nUse SPACE to toggle, ENTER to confirm" \
+        15 68 2 \
+        1 "Use Caddy Reverse Proxy (SSL/TLS + Domains)" $([ "$USE_CADDY" == "true" ] && echo "on" || echo "off") \
+        2 "Create Default VLESS Reality Inbound" $([ "$CREATE_DEFAULT_INBOUND" == "true" ] && echo "on" || echo "off") \
         2>&1 1>&3)
+    
+    exit_status=$?
     exec 3>&-
     
-    if [[ $? -ne 0 ]]; then
-        clear
-        exit 0
-    fi
-    
-    XUI_USERNAME=$(echo "$values" | sed -n 1p)
-    XUI_PASSWORD=$(echo "$values" | sed -n 2p)
-    
-    if [[ -z "$XUI_USERNAME" ]]; then
-        XUI_USERNAME=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 10 | head -n 1)
-    fi
-    if [[ -z "$XUI_PASSWORD" ]]; then
-        length=$((20 + RANDOM % 11))
-        XUI_PASSWORD=$(LC_ALL=C tr -dc 'a-zA-Z0-9!@#$%^&*()_+-=' </dev/urandom | fold -w $length | head -n 1)
-    fi
-}
-
-ask_caddy() {
-    dialog --title "Caddy Configuration" \
-        --backtitle "3X-UI + CADDY INSTALLER" \
-        --yesno "Do you want to use Caddy as a reverse proxy?\n\nThis will allow you to use domains and SSL certificates." 10 60
-    
-    if [[ $? -eq 0 ]]; then
-        USE_CADDY="true"
-    else
-        USE_CADDY="false"
-    fi
-}
-
-ask_default_inbound() {
-    dialog --title "Default Inbound" \
-        --backtitle "3X-UI + CADDY INSTALLER" \
-        --yesno "Do you want to create a default VLESS Reality inbound?\n\nThis will create an inbound with predefined settings." 10 60
-    
-    if [[ $? -eq 0 ]]; then
-        CREATE_DEFAULT_INBOUND="true"
-    else
-        CREATE_DEFAULT_INBOUND="false"
-    fi
-}
-
-read_parameters() {
-    exec 3>&1
-    
-    if [[ "$USE_CADDY" == "true" ]]; then
-        values=$(dialog --title "Configuration" \
-            --backtitle "3X-UI + CADDY INSTALLER" \
-            --form "Enter configuration details:" 14 65 4 \
-            "Panel port:"        1 1 "8080" 1 20 40 0 \
-            "Subscription port:" 2 1 "2096" 2 20 40 0 \
-            "Panel domain:"      3 1 ""     3 20 40 0 \
-            "Subscription domain:" 4 1 ""   4 20 40 0 \
-            2>&1 1>&3)
-        
-        exec 3>&-
-        
-        if [[ $? -ne 0 ]]; then
-            clear
-            exit 0
+    if [ $exit_status -eq 0 ]; then
+        # Update options based on selection
+        if echo "$selection" | grep -q "1"; then
+            USE_CADDY="true"
+            USE_CADDY_SYMBOL="[\Z2✓\Zn]"
+        else
+            USE_CADDY="false"
+            USE_CADDY_SYMBOL="[ ]"
         fi
         
-        PANEL_PORT=$(echo "$values" | sed -n 1p)
-        SUB_PORT=$(echo "$values" | sed -n 2p)
-        PANEL_DOMAIN=$(echo "$values" | sed -n 3p)
-        SUB_DOMAIN=$(echo "$values" | sed -n 4p)
-    else
-        values=$(dialog --title "Configuration" \
-            --backtitle "3X-UI + CADDY INSTALLER" \
-            --form "Enter configuration details:" 12 65 2 \
-            "Panel port:"        1 1 "8080" 1 20 40 0 \
-            "Subscription port:" 2 1 "2096" 2 20 40 0 \
-            2>&1 1>&3)
-        
-        exec 3>&-
-        
-        if [[ $? -ne 0 ]]; then
-            clear
-            exit 0
+        if echo "$selection" | grep -q "2"; then
+            CREATE_DEFAULT_INBOUND="true"
+            CREATE_INBOUND_SYMBOL="[\Z2✓\Zn]"
+        else
+            CREATE_DEFAULT_INBOUND="false"
+            CREATE_INBOUND_SYMBOL="[ ]"
         fi
-        
-        PANEL_PORT=$(echo "$values" | sed -n 1p)
-        SUB_PORT=$(echo "$values" | sed -n 2p)
     fi
-    
-    PANEL_PORT=${PANEL_PORT:-8080}
-    SUB_PORT=${SUB_PORT:-2096}
 }
 
 install_base() {
-    dialog --title "Installing Dependencies" \
-        --backtitle "3X-UI + CADDY INSTALLER" \
-        --infobox "Installing base dependencies...\nPlease wait..." 5 50
-    
-    case "${release}" in
-        ubuntu | debian | armbian)
-            apt-get update >/dev/null 2>&1 && apt-get install -y -q wget curl tar tzdata sqlite3 jq >/dev/null 2>&1
-        ;;
-        fedora | amzn | virtuozzo | rhel | almalinux | rocky | ol)
-            dnf -y update >/dev/null 2>&1 && dnf install -y -q wget curl tar tzdata sqlite jq >/dev/null 2>&1
-        ;;
-        centos)
-            if [[ "${VERSION_ID}" =~ ^7 ]]; then
-                yum -y update >/dev/null 2>&1 && yum install -y wget curl tar tzdata sqlite jq >/dev/null 2>&1
-            else
+    (
+        echo "10"
+        echo "XXX"
+        echo "\n\Z4Installing base dependencies...\Zn"
+        echo "XXX"
+        
+        case "${release}" in
+            ubuntu | debian | armbian)
+                apt-get update >/dev/null 2>&1 && apt-get install -y -q wget curl tar tzdata sqlite3 jq >/dev/null 2>&1
+            ;;
+            fedora | amzn | virtuozzo | rhel | almalinux | rocky | ol)
                 dnf -y update >/dev/null 2>&1 && dnf install -y -q wget curl tar tzdata sqlite jq >/dev/null 2>&1
-            fi
-        ;;
-        *)
-            apt-get update >/dev/null 2>&1 && apt-get install -y -q wget curl tar tzdata sqlite3 jq >/dev/null 2>&1
-        ;;
-    esac
-    sleep 1
+            ;;
+            centos)
+                if [[ "${VERSION_ID}" =~ ^7 ]]; then
+                    yum -y update >/dev/null 2>&1 && yum install -y wget curl tar tzdata sqlite jq >/dev/null 2>&1
+                else
+                    dnf -y update >/dev/null 2>&1 && dnf install -y -q wget curl tar tzdata sqlite jq >/dev/null 2>&1
+                fi
+            ;;
+            *)
+                apt-get update >/dev/null 2>&1 && apt-get install -y -q wget curl tar tzdata sqlite3 jq >/dev/null 2>&1
+            ;;
+        esac
+        
+        echo "100"
+        echo "XXX"
+        echo "\n\Z2✓ Dependencies installed successfully\Zn"
+        echo "XXX"
+        sleep 1
+        
+    ) | dialog \
+        --backtitle "╔═══════════════════════════════════════════════════════════════════╗" \
+        --title "┤ Installation Progress ├" \
+        --colors \
+        --gauge "\n\Z4Preparing system...\Zn" 10 70 0
 }
 
 install_3xui() {
     (
-        echo "10" ; sleep 1
-        echo "XXX" ; echo "Fetching latest version..." ; echo "XXX"
+        echo "5"
+        echo "XXX"
+        echo "\n\Z4Fetching latest 3X-UI version...\Zn"
+        echo "XXX"
+        sleep 1
         
         cd /usr/local/
         tag_version=$(curl -Ls "https://api.github.com/repos/drafwodgaming/3x-ui-caddy/releases/latest" \
             | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
         [[ ! -n "$tag_version" ]] && echo -e "${red}✗ Failed to fetch version${plain}" && exit 1
         
-        echo "30" ; sleep 1
-        echo "XXX" ; echo "Downloading 3x-ui ${tag_version}..." ; echo "XXX"
+        echo "15"
+        echo "XXX"
+        echo "\n\Z4Downloading 3X-UI ${tag_version}...\Zn"
+        echo "XXX"
         
         wget --inet4-only -q -O /usr/local/x-ui-linux-$(arch).tar.gz \
             https://github.com/drafwodgaming/3x-ui-caddy/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz
@@ -205,8 +257,10 @@ install_3xui() {
         wget --inet4-only -q -O /usr/bin/x-ui-temp \
             https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/main/x-ui.sh
         
-        echo "50" ; sleep 1
-        echo "XXX" ; echo "Extracting files..." ; echo "XXX"
+        echo "40"
+        echo "XXX"
+        echo "\n\Z4Extracting files...\Zn"
+        echo "XXX"
         
         if [[ -e /usr/local/x-ui/ ]]; then
             systemctl stop x-ui 2>/dev/null || true
@@ -216,8 +270,10 @@ install_3xui() {
         tar zxf x-ui-linux-$(arch).tar.gz >/dev/null 2>&1
         rm x-ui-linux-$(arch).tar.gz -f
         
-        echo "70" ; sleep 1
-        echo "XXX" ; echo "Setting permissions..." ; echo "XXX"
+        echo "60"
+        echo "XXX"
+        echo "\n\Z4Configuring permissions...\Zn"
+        echo "XXX"
         
         cd x-ui
         chmod +x x-ui x-ui.sh
@@ -231,8 +287,10 @@ install_3xui() {
         mv -f /usr/bin/x-ui-temp /usr/bin/x-ui
         chmod +x /usr/bin/x-ui
         
-        echo "85" ; sleep 1
-        echo "XXX" ; echo "Configuring panel..." ; echo "XXX"
+        echo "75"
+        echo "XXX"
+        echo "\n\Z4Applying configuration...\Zn"
+        echo "XXX"
         
         config_webBasePath=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 18 | head -n 1)
         
@@ -243,26 +301,35 @@ install_3xui() {
         systemctl daemon-reload
         systemctl enable x-ui >/dev/null 2>&1
         
-        echo "95" ; sleep 1
-        echo "XXX" ; echo "Starting service..." ; echo "XXX"
+        echo "90"
+        echo "XXX"
+        echo "\n\Z4Starting 3X-UI service...\Zn"
+        echo "XXX"
         
         systemctl start x-ui
         sleep 5
         
         /usr/local/x-ui/x-ui migrate >/dev/null 2>&1
         
-        echo "100" ; sleep 1
-        echo "XXX" ; echo "Installation complete!" ; echo "XXX"
+        echo "100"
+        echo "XXX"
+        echo "\n\Z2✓ 3X-UI ${tag_version} installed successfully!\Zn"
+        echo "XXX"
+        sleep 1
         
-    ) | dialog --title "Installing 3X-UI" \
-        --backtitle "3X-UI + CADDY INSTALLER" \
-        --gauge "Starting installation..." 10 60 0
+    ) | dialog \
+        --backtitle "╔═══════════════════════════════════════════════════════════════════╗" \
+        --title "┤ Installing 3X-UI ├" \
+        --colors \
+        --gauge "\n\Z4Starting installation...\Zn" 10 70 0
 }
 
 install_caddy() {
     (
-        echo "10" ; sleep 1
-        echo "XXX" ; echo "Adding Caddy repository..." ; echo "XXX"
+        echo "10"
+        echo "XXX"
+        echo "\n\Z4Adding Caddy repository...\Zn"
+        echo "XXX"
         
         apt update >/dev/null 2>&1 && apt install -y ca-certificates curl gnupg >/dev/null 2>&1
         install -m 0755 -d /etc/apt/keyrings
@@ -271,26 +338,41 @@ install_caddy() {
         echo "deb [signed-by=/etc/apt/keyrings/caddy.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main" \
             | tee /etc/apt/sources.list.d/caddy.list >/dev/null
         
-        echo "50" ; sleep 1
-        echo "XXX" ; echo "Installing Caddy..." ; echo "XXX"
+        echo "40"
+        echo "XXX"
+        echo "\n\Z4Updating package list...\Zn"
+        echo "XXX"
         
         apt update >/dev/null 2>&1
+        
+        echo "60"
+        echo "XXX"
+        echo "\n\Z4Installing Caddy...\Zn"
+        echo "XXX"
+        
         apt install -y caddy >/dev/null 2>&1
         
-        echo "100" ; sleep 1
-        echo "XXX" ; echo "Caddy installed successfully!" ; echo "XXX"
+        echo "100"
+        echo "XXX"
+        echo "\n\Z2✓ Caddy installed successfully!\Zn"
+        echo "XXX"
+        sleep 1
         
-    ) | dialog --title "Installing Caddy" \
-        --backtitle "3X-UI + CADDY INSTALLER" \
-        --gauge "Starting Caddy installation..." 10 60 0
+    ) | dialog \
+        --backtitle "╔═══════════════════════════════════════════════════════════════════╗" \
+        --title "┤ Installing Caddy ├" \
+        --colors \
+        --gauge "\n\Z4Starting Caddy installation...\Zn" 10 70 0
 }
 
 configure_caddy() {
-    dialog --title "Configuring Caddy" \
-        --backtitle "3X-UI + CADDY INSTALLER" \
-        --infobox "Configuring reverse proxy...\nPlease wait..." 5 50
-    
-    cat > /etc/caddy/Caddyfile <<EOF
+    (
+        echo "30"
+        echo "XXX"
+        echo "\n\Z4Creating Caddyfile configuration...\Zn"
+        echo "XXX"
+        
+        cat > /etc/caddy/Caddyfile <<EOF
 $PANEL_DOMAIN:8443 {
     encode gzip
     reverse_proxy 127.0.0.1:$PANEL_PORT
@@ -302,9 +384,26 @@ $SUB_DOMAIN:8443 {
     reverse_proxy 127.0.0.1:$SUB_PORT
 }
 EOF
-    
-    systemctl restart caddy
-    sleep 2
+        
+        echo "70"
+        echo "XXX"
+        echo "\n\Z4Restarting Caddy service...\Zn"
+        echo "XXX"
+        
+        systemctl restart caddy
+        sleep 2
+        
+        echo "100"
+        echo "XXX"
+        echo "\n\Z2✓ Caddy configured successfully!\Zn"
+        echo "XXX"
+        sleep 1
+        
+    ) | dialog \
+        --backtitle "╔═══════════════════════════════════════════════════════════════════╗" \
+        --title "┤ Configuring Caddy ├" \
+        --colors \
+        --gauge "\n\Z4Configuring reverse proxy...\Zn" 10 70 0
 }
 
 api_login() {
@@ -493,76 +592,110 @@ EOF
 
 configure_reality_inbound() {
     (
-        echo "10" ; sleep 1
-        echo "XXX" ; echo "Authenticating with panel..." ; echo "XXX"
+        echo "10"
+        echo "XXX"
+        echo "\n\Z4Authenticating with panel API...\Zn"
+        echo "XXX"
+        sleep 1
         
         if ! api_login; then
             echo "100"
-            echo "XXX" ; echo "Authentication failed!" ; echo "XXX"
+            echo "XXX"
+            echo "\n\Z1✗ Authentication failed!\Zn"
+            echo "XXX"
             sleep 2
             return 1
         fi
         
-        echo "30" ; sleep 1
-        echo "XXX" ; echo "Generating UUID..." ; echo "XXX"
+        echo "30"
+        echo "XXX"
+        echo "\n\Z4Generating client UUID...\Zn"
+        echo "XXX"
         sleep 1
         
-        echo "50" ; sleep 1
-        echo "XXX" ; echo "Generating Reality keys..." ; echo "XXX"
+        echo "50"
+        echo "XXX"
+        echo "\n\Z4Generating Reality keys...\Zn"
+        echo "XXX"
         sleep 1
         
-        echo "70" ; sleep 1
-        echo "XXX" ; echo "Creating inbound..." ; echo "XXX"
+        echo "70"
+        echo "XXX"
+        echo "\n\Z4Creating VLESS Reality inbound...\Zn"
+        echo "XXX"
         
         if create_vless_reality_inbound; then
             echo "100"
-            echo "XXX" ; echo "VLESS Reality inbound created!" ; echo "XXX"
+            echo "XXX"
+            echo "\n\Z2✓ VLESS Reality inbound created successfully!\Zn"
+            echo "XXX"
             sleep 2
         else
             echo "100"
-            echo "XXX" ; echo "Failed to create inbound!" ; echo "XXX"
+            echo "XXX"
+            echo "\n\Z1✗ Failed to create inbound!\Zn"
+            echo "XXX"
             sleep 2
             return 1
         fi
         
-    ) | dialog --title "Creating VLESS Reality Inbound" \
-        --backtitle "3X-UI + CADDY INSTALLER" \
-        --gauge "Starting inbound creation..." 10 60 0
+    ) | dialog \
+        --backtitle "╔═══════════════════════════════════════════════════════════════════╗" \
+        --title "┤ Creating VLESS Reality Inbound ├" \
+        --colors \
+        --gauge "\n\Z4Setting up default inbound...\Zn" 10 70 0
 }
 
 show_summary() {
-    sleep 2
+    sleep 1
     PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>/dev/null)
     ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
     ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+')
     SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
     
-    local summary="╔══════════════════════════════════════════════╗\n"
-    summary+="║     INSTALLATION COMPLETED SUCCESSFULLY      ║\n"
-    summary+="╚══════════════════════════════════════════════╝\n\n"
-    summary+="CREDENTIALS:\n"
-    summary+="  Username: ${XUI_USERNAME}\n"
-    summary+="  Password: ${XUI_PASSWORD}\n\n"
-    summary+="ACCESS URLS:\n"
+    local summary="\n\Z2╔══════════════════════════════════════════════════════════╗\Zn\n"
+    summary+="\Z2║          ✓ INSTALLATION COMPLETED SUCCESSFULLY          ║\Zn\n"
+    summary+="\Z2╚══════════════════════════════════════════════════════════╝\Zn\n\n"
+    
+    summary+="\Z4┌─ Credentials ─────────────────────────────────────────┐\Zn\n"
+    summary+="│                                                       │\n"
+    summary+="│  \Z1Username:\Zn \Z3${XUI_USERNAME}\Zn\n"
+    summary+="│  \Z1Password:\Zn \Z3${XUI_PASSWORD}\Zn\n"
+    summary+="│                                                       │\n"
+    summary+="\Z4└───────────────────────────────────────────────────────┘\Zn\n\n"
+    
+    summary+="\Z4┌─ Access URLs ─────────────────────────────────────────┐\Zn\n"
+    summary+="│                                                       │\n"
     
     if [[ "$USE_CADDY" == "true" ]]; then
-        summary+="  Panel (HTTPS):\n"
-        summary+="    https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}\n\n"
-        summary+="  Subscription:\n"
-        summary+="    https://${SUB_DOMAIN}:8443/\n"
-    else
-        summary+="  Panel (Direct):\n"
-        summary+="    http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}\n"
+        summary+="│  \Z1Panel (HTTPS):\Zn                                     │\n"
+        summary+="│    \Z6https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}\Zn\n"
+        summary+="│                                                       │\n"
+        summary+="│  \Z1Subscription:\Zn                                      │\n"
+        summary+="│    \Z6https://${SUB_DOMAIN}:8443/\Zn\n"
+else
+        summary+="│  \Z1Panel (HTTP):\Zn                                      │\n"
+        summary+="│    \Z6http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}\Zn\n"
     fi
+    
+    summary+="│                                                       │\n"
+    summary+="\Z4└───────────────────────────────────────────────────────┘\Zn\n"
     
     if [[ "$CREATE_DEFAULT_INBOUND" == "true" && -f /root/vless_reality_config.txt ]]; then
-        summary+="\n\nVLESS REALITY CONFIG:\n"
-        summary+="  Saved to: /root/vless_reality_config.txt\n"
+        summary+="\n\Z4┌─ VLESS Reality Configuration ─────────────────────────┐\Zn\n"
+        summary+="│                                                       │\n"
+        summary+="│  \Z2✓ Configuration saved to:\Zn                          │\n"
+        summary+="│    \Z6/root/vless_reality_config.txt\Zn\n"
+        summary+="│                                                       │\n"
+        summary+="\Z4└───────────────────────────────────────────────────────┘\Zn\n"
     fi
     
-    dialog --title "Installation Complete" \
-        --backtitle "3X-UI + CADDY INSTALLER" \
-        --msgbox "$summary" 20 70
+    dialog \
+        --backtitle "╔═══════════════════════════════════════════════════════════════════╗" \
+        --title "┤ Installation Complete ├" \
+        --colors \
+        --ok-label "Finish" \
+        --msgbox "$summary" 24 70
     
     clear
 }
@@ -570,14 +703,29 @@ show_summary() {
 main() {
     install_dialog
     
-    dialog --title "Welcome" \
-        --backtitle "3X-UI + CADDY INSTALLER" \
-        --msgbox "Welcome to 3X-UI + Caddy Installer\n\nThis wizard will guide you through the installation process." 10 60
+    # Set default values
+    XUI_USERNAME=""
+    XUI_PASSWORD=""
+    PANEL_PORT="8080"
+    SUB_PORT="2096"
+    PANEL_DOMAIN=""
+    SUB_DOMAIN=""
+    USE_CADDY="false"
+    CREATE_DEFAULT_INBOUND="false"
+    USE_CADDY_SYMBOL="[ ]"
+    CREATE_INBOUND_SYMBOL="[ ]"
     
-    read_credentials
-    ask_caddy
-    ask_default_inbound
-    read_parameters
+    # Show welcome screen
+    dialog \
+        --backtitle "╔═══════════════════════════════════════════════════════════════════╗" \
+        --title "┤ Welcome ├" \
+        --colors \
+        --msgbox "\n\Z4✦ 3X-UI + Caddy Installer ✦\Zn\n\nThis wizard will guide you through the installation\nof 3X-UI with optional Caddy reverse proxy.\n\n\Z2Features:\Zn\n• Automatic configuration\n• SSL/TLS support with Caddy\n• VLESS Reality inbound creation\n• User-friendly interface\n\n\Z1Press OK to continue...\Zn" 18 65
+    
+    # Show configuration form
+    show_config_form
+    
+    # Start installation
     install_base
     install_3xui
     
