@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#####
+#
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -83,7 +83,6 @@ show_welcome() {
     gum style --foreground 86 "Features:"
     gum style --foreground 250 "  • Automatic configuration"
     gum style --foreground 250 "  • SSL/TLS support with Caddy"
-    gum style --foreground 250 "  • VLESS Reality inbound creation"
     gum style --foreground 250 "  • Beautiful modern interface"
     
     echo ""
