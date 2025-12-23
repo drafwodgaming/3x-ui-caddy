@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-
+# 
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -258,7 +258,7 @@ api_login() {
     fi
     
     local response=$(curl -k -s -c /tmp/xui_cookies.txt -X POST \
-        "${PANEL_URL}/login" \
+        "${PANEL_URL}login" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
         -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" 2>/dev/null)
@@ -276,7 +276,7 @@ api_login() {
 # --- Generate UUID via API ---
 generate_uuid() {
     local response=$(curl -k -s -b /tmp/xui_cookies.txt -X GET \
-        "${PANEL_URL}/panel/api/server/getNewUUID" 2>/dev/null)
+        "${PANEL_URL}panel/api/server/getNewUUID" 2>/dev/null)
     
     local uuid=$(echo "$response" | jq -r '.obj // empty' 2>/dev/null)
     
@@ -290,7 +290,7 @@ generate_uuid() {
 # --- Generate Reality Keys via API ---
 generate_reality_keys() {
     local response=$(curl -k -s -b /tmp/xui_cookies.txt -X GET \
-        "${PANEL_URL}/panel/api/server/getNewX25519Cert" 2>/dev/null)
+        "${PANEL_URL}panel/api/server/getNewX25519Cert" 2>/dev/null)
     
     REALITY_PRIVATE_KEY=$(echo "$response" | jq -r '.obj.privateKey // empty' 2>/dev/null)
     REALITY_PUBLIC_KEY=$(echo "$response" | jq -r '.obj.publicKey // empty' 2>/dev/null)
@@ -407,7 +407,7 @@ create_vless_reality_inbound() {
     )
     
     local response=$(curl -k -s -b /tmp/xui_cookies.txt -X POST \
-        "${PANEL_URL}/panel/api/inbounds/add" \
+        "${PANEL_URL}panel/api/inbounds/add" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json" \
         -d "$inbound_json" 2>/dev/null)
