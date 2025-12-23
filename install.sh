@@ -278,7 +278,7 @@ generate_uuid() {
     local response=$(curl -k -s -b /tmp/xui_cookies.txt -X GET \
         "${PANEL_URL}panel/api/server/getNewUUID" 2>/dev/null)
     
-    local uuid=$(echo "$response" | jq -r '.obj // empty' 2>/dev/null)
+    local uuid=$(echo "$response" | jq -r '.obj.uuid // empty' 2>/dev/null)
     
     if [[ -n "$uuid" && "$uuid" != "null" ]]; then
         echo "$uuid"
