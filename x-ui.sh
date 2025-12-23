@@ -1,14 +1,26 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
-# --- Colors & Variables ---
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
 yellow='\033[0;33m'
 plain='\033[0m'
 
-# Check root
-[[ $EUID -ne 0 ]] && gum style --foreground 196 "ERROR: You must be root to run this script!" && exit 1
+#Add some basic function here
+function LOGD() {
+    echo -e "${yellow}[DEG] $* ${plain}"
+}
+
+function LOGE() {
+    echo -e "${red}[ERR] $* ${plain}"
+}
+
+function LOGI() {
+    echo -e "${green}[INF] $* ${plain}"
+}
+
+# check root
+[[ $EUID -ne 0 ]] && LOGE "ERROR: You must be root to run this script! \n" && exit 1
 
 # Check OS and set release variable
 if [[ -f /etc/os-release ]]; then
@@ -18,9 +30,10 @@ elif [[ -f /usr/lib/os-release ]]; then
     source /usr/lib/os-release
     release=$ID
 else
-    echo "Failed to check the system OS" >&2
+    echo "Failed to check the system OS, please contact the author!" >&2
     exit 1
 fi
+echo "The OS release is: $release"
 
 os_version=""
 os_version=$(grep "^VERSION_ID" /etc/os-release | cut -d '=' -f2 | tr -d '"' | tr -d '.')
@@ -30,55 +43,154 @@ log_folder="${XUI_LOG_FOLDER:=/var/log}"
 iplimit_log_path="${log_folder}/3xipl.log"
 iplimit_banned_log_path="${log_folder}/3xipl-banned.log"
 
-# --- Gum Installation & Helpers ---
-ensure_gum() {
-    if ! command -v gum &> /dev/null; then
-        gum style --foreground 212 "Installing gum..."
-        case "${release}" in
-            ubuntu | debian | armbian)
-                mkdir -p /etc/apt/keyrings
-                curl -fsSL https://repo.charm.sh/apt/gpg.key | gpg --dearmor -o /etc/apt/keyrings/charm.gpg
-                echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" | tee /etc/apt/sources.list.d/charm.list
-                apt update && apt install -y gum
-            ;;
-            fedora | amzn | rhel | almalinux | rocky | ol)
-                echo '[charm]
-name=Charm
-baseurl=https://repo.charm.sh/yum/
-enabled=1
-gpgcheck=1
-gpgkey=https://repo.charm.sh/yum/gpg.key' | tee /etc/yum.repos.d/charm.repo
-                yum install -y gum
-            ;;
-            *)
-                ARCH=$(uname -m)
-                if [[ "$ARCH" == "x86_64" ]]; then
-                    wget -q https://github.com/charmbracelet/gum/releases/download/v0.14.5/gum_0.14.5_linux_amd64.tar.gz
-                    tar -xzf gum_0.14.5_linux_amd64.tar.gz
-                    mv gum /usr/local/bin/
-                    rm gum_0.14.5_linux_amd64.tar.gz
-                else
-                    echo "Gum auto-install failed for this arch. Please install manually."
-                    exit 1
-                fi
-            ;;
-        esac
+confirm() {
+    if [[ $# > 1 ]]; then
+        echo && read -rp "$1 [Default $2]: " temp
+        if [[ "${temp}" == "" ]]; then
+            temp=$2
+        fi
+    else
+        read -rp "$1 [y/n]: " temp
+    fi
+    if [[ "${temp}" == "y" || "${temp}" == "Y" ]]; then
+        return 0
+    else
+        return 1
     fi
 }
 
-show_header() {
-    clear
-    gum style \
-        --foreground 212 --border-foreground 212 --border double \
-        --align center --width 50 --margin "1 2" --padding "2 4" \
-        "3X-UI MANAGEMENT"
-    gum style --foreground 240 "Powered by Gum TUI"
+confirm_restart() {
+    confirm "Restart the panel, Attention: Restarting the panel will also restart xray" "y"
+    if [[ $? == 0 ]]; then
+        restart
+    else
+        show_menu
+    fi
 }
 
-# --- Basic Functions ---
-function LOGD() { gum style --foreground 220 "[DEG] $*"; }
-function LOGE() { gum style --foreground 196 "[ERR] $*"; }
-function LOGI() { gum style --foreground 46 "[INF] $*"; }
+before_show_menu() {
+    echo && echo -n -e "${yellow}Press enter to return to the main menu: ${plain}" && read -r temp
+    show_menu
+}
+
+install() {
+    bash <(curl -Ls https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/main/install.sh)
+    if [[ $? == 0 ]]; then
+        if [[ $# == 0 ]]; then
+            start
+        else
+            start 0
+        fi
+    fi
+}
+
+update() {
+    confirm "This function will update all x-ui components to the latest version, and the data will not be lost. Do you want to continue?" "y"
+    if [[ $? != 0 ]]; then
+        LOGE "Cancelled"
+        if [[ $# == 0 ]]; then
+            before_show_menu
+        fi
+        return 0
+    fi
+    bash <(curl -Ls https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/main/update.sh)
+    if [[ $? == 0 ]]; then
+        LOGI "Update is complete, Panel has automatically restarted "
+        before_show_menu
+    fi
+}
+
+update_menu() {
+    echo -e "${yellow}Updating Menu${plain}"
+    confirm "This function will update the menu to the latest changes." "y"
+    if [[ $? != 0 ]]; then
+        LOGE "Cancelled"
+        if [[ $# == 0 ]]; then
+            before_show_menu
+        fi
+        return 0
+    fi
+
+    wget -O /usr/bin/x-ui https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/main/x-ui.sh
+    chmod +x /usr/local/x-ui/x-ui.sh
+    chmod +x /usr/bin/x-ui
+
+    if [[ $? == 0 ]]; then
+        echo -e "${green}Update successful. The panel has automatically restarted.${plain}"
+        exit 0
+    else
+        echo -e "${red}Failed to update the menu.${plain}"
+        return 1
+    fi
+}
+
+# Function to handle the deletion of the script file
+delete_script() {
+    rm "$0" # Remove the script file itself
+    exit 1
+}
+
+uninstall() {
+    confirm "Are you sure you want to uninstall the panel? xray will also uninstalled!" "n"
+    if [[ $? != 0 ]]; then
+        if [[ $# == 0 ]]; then
+            show_menu
+        fi
+        return 0
+    fi
+
+    if [[ $release == "alpine" ]]; then
+        rc-service x-ui stop
+        rc-update del x-ui
+        rm /etc/init.d/x-ui -f
+    else
+        systemctl stop x-ui
+        systemctl disable x-ui
+        rm /etc/systemd/system/x-ui.service -f
+        systemctl daemon-reload
+        systemctl reset-failed
+    fi
+
+    rm /etc/x-ui/ -rf
+    rm /usr/local/x-ui/ -rf
+
+    echo ""
+    echo -e "Uninstalled Successfully.\n"
+    echo "If you need to install this panel again, you can use below command:"
+    echo -e "${green}bash <(curl -Ls https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/master/install.sh)${plain}"
+    echo ""
+    # Trap the SIGTERM signal
+    trap delete_script SIGTERM
+    delete_script
+}
+
+reset_user() {
+    confirm "Are you sure to reset the username and password of the panel?" "n"
+    if [[ $? != 0 ]]; then
+        if [[ $# == 0 ]]; then
+            show_menu
+        fi
+        return 0
+    fi
+    
+    read -rp "Please set the login username [default is a random username]: " config_account
+    [[ -z $config_account ]] && config_account=$(gen_random_string 10)
+    read -rp "Please set the login password [default is a random password]: " config_password
+    [[ -z $config_password ]] && config_password=$(gen_random_string 18)
+
+    read -rp "Do you want to disable currently configured two-factor authentication? (y/n): " twoFactorConfirm
+    if [[ $twoFactorConfirm != "y" && $twoFactorConfirm != "Y" ]]; then
+        /usr/local/x-ui/x-ui setting -username ${config_account} -password ${config_password} -resetTwoFactor false >/dev/null 2>&1
+    else
+        /usr/local/x-ui/x-ui setting -username ${config_account} -password ${config_password} -resetTwoFactor true >/dev/null 2>&1
+        echo -e "Two factor authentication has been disabled."
+    fi
+    
+    echo -e "Panel login username has been reset to: ${green} ${config_account} ${plain}"
+    echo -e "Panel login password has been reset to: ${green} ${config_password} ${plain}"
+    echo -e "${green} Please use the new login username and password to access the X-UI panel. Also remember them! ${plain}"
+    confirm_restart
+}
 
 gen_random_string() {
     local length="$1"
@@ -86,142 +198,86 @@ gen_random_string() {
     echo "$random_string"
 }
 
-# --- Status Functions ---
-check_status() {
-    if [[ $release == "alpine" ]]; then
-        if [[ ! -f /etc/init.d/x-ui ]]; then return 2; fi
-        if [[ $(rc-service x-ui status | grep -F 'status: started' -c) == 1 ]]; then return 0; else return 1; fi
-    else
-        if [[ ! -f /etc/systemd/system/x-ui.service ]]; then return 2; fi
-        temp=$(systemctl status x-ui | grep Active | awk '{print $3}' | cut -d "(" -f2 | cut -d ")" -f1)
-        if [[ "${temp}" == "running" ]]; then return 0; else return 1; fi
-    fi
-}
-
-get_status_text() {
-    check_status
-    case $? in
-        0) echo "Running" ;;
-        1) echo "Stopped" ;;
-        2) echo "Not Installed" ;;
-    esac
-}
-
-# --- Core Action Functions (Modified for Gum) ---
-install() {
-    if gum confirm "Download and run the official installer?"; then
-        bash <(curl -Ls https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/main/install.sh)
-        if [[ $? == 0 ]]; then
-            gum style --foreground 46 "Installation finished. Starting..."
-            start 0
-        fi
-    fi
-}
-
-update() {
-    if gum confirm "Update all x-ui components to the latest version?"; then
-        bash <(curl -Ls https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/main/update.sh)
-        if [[ $? == 0 ]]; then
-            gum style --foreground 46 "Update complete."
-            start 0
-        fi
-    fi
-}
-
-update_menu() {
-    if gum confirm "Update this management menu script?"; then
-        wget -O /usr/bin/x-ui https://raw.githubusercontent.com/drafwodgaming/3x-ui-caddy/main/x-ui.sh
-        chmod +x /usr/local/x-ui/x-ui.sh
-        chmod +x /usr/bin/x-ui
-        gum style --foreground 46 "Menu script updated."
-        exit 0
-    fi
-}
-
-uninstall() {
-    if gum confirm --affirmative="UNINSTALL" --negative="Cancel" "Are you REALLY sure? This cannot be undone."; then
-        if [[ $release == "alpine" ]]; then
-            rc-service x-ui stop
-            rc-update del x-ui
-            rm /etc/init.d/x-ui -f
-        else
-            systemctl stop x-ui
-            systemctl disable x-ui
-            rm /etc/systemd/system/x-ui.service -f
-            systemctl daemon-reload
-            systemctl reset-failed
-        fi
-        rm /etc/x-ui/ -rf
-        rm /usr/local/x-ui/ -rf
-        gum style --foreground 46 "Uninstalled Successfully."
-        exit 0
-    fi
-}
-
-reset_user() {
-    if gum confirm "Reset username and password?"; then
-        config_account=$(gum input --placeholder "Username (empty for random)" --value "$config_account")
-        [[ -z $config_account ]] && config_account=$(gen_random_string 10)
-        
-        config_password=$(gum input --placeholder "Password (empty for random)" --password --value "$config_password")
-        [[ -z $config_password ]] && config_password=$(gen_random_string 18)
-
-        if gum confirm "Disable 2FA?"; then
-            /usr/local/x-ui/x-ui setting -username ${config_account} -password ${config_password} -resetTwoFactor true >/dev/null 2>&1
-        else
-            /usr/local/x-ui/x-ui setting -username ${config_account} -password ${config_password} -resetTwoFactor false >/dev/null 2>&1
-        fi
-        
-        gum style --foreground 212 "Username: $config_account"
-        gum style --foreground 212 "Password: $config_password"
-        restart 0
-    fi
-}
-
 reset_webbasepath() {
-    if gum confirm "Reset Web Base Path?"; then
-        config_webBasePath=$(gen_random_string 18)
-        /usr/local/x-ui/x-ui setting -webBasePath "${config_webBasePath}" >/dev/null 2>&1
-        gum style --foreground 46 "New Path: ${config_webBasePath}"
-        restart 0
+    echo -e "${yellow}Resetting Web Base Path${plain}"
+
+    read -rp "Are you sure you want to reset the web base path? (y/n): " confirm
+    if [[ $confirm != "y" && $confirm != "Y" ]]; then
+        echo -e "${yellow}Operation canceled.${plain}"
+        return
     fi
+
+    config_webBasePath=$(gen_random_string 18)
+
+    # Apply the new web base path setting
+    /usr/local/x-ui/x-ui setting -webBasePath "${config_webBasePath}" >/dev/null 2>&1
+
+    echo -e "Web base path has been reset to: ${green}${config_webBasePath}${plain}"
+    echo -e "${green}Please use the new web base path to access the panel.${plain}"
+    restart
 }
 
 reset_config() {
-    if gum confirm "Reset all panel settings to default?"; then
-        /usr/local/x-ui/x-ui setting -reset
-        restart 0
+    confirm "Are you sure you want to reset all panel settings, Account data will not be lost, Username and password will not change" "n"
+    if [[ $? != 0 ]]; then
+        if [[ $# == 0 ]]; then
+            show_menu
+        fi
+        return 0
     fi
+    /usr/local/x-ui/x-ui setting -reset
+    echo -e "All panel settings have been reset to default."
+    restart
 }
 
 check_config() {
     local info=$(/usr/local/x-ui/x-ui setting -show true)
     if [[ $? != 0 ]]; then
-        LOGE "get current settings error"
+        LOGE "get current settings error, please check logs"
+        show_menu
         return
     fi
-    gum style --foreground 86 "$info"
-    
+    LOGI "${info}"
+
     local existing_webBasePath=$(echo "$info" | grep -Eo 'webBasePath: .+' | awk '{print $2}')
     local existing_port=$(echo "$info" | grep -Eo 'port: .+' | awk '{print $2}')
-    local server_ip=$(curl -s --max-time 3 https://api.ipify.org || curl -s https://4.ident.me)
-    
-    gum style --foreground 46 "Access URL: http://${server_ip}:${existing_port}${existing_webBasePath}"
+    local existing_cert=$(/usr/local/x-ui/x-ui setting -getCert true | grep -Eo 'cert: .+' | awk '{print $2}')
+    local server_ip=$(curl -s --max-time 3 https://api.ipify.org)
+    if [ -z "$server_ip" ]; then
+        server_ip=$(curl -s --max-time 3 https://4.ident.me)
+    fi
+
+    if [[ -n "$existing_cert" ]]; then
+        local domain=$(basename "$(dirname "$existing_cert")")
+
+        if [[ "$domain" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+            echo -e "${green}Access URL: https://${domain}:${existing_port}${existing_webBasePath}${plain}"
+        else
+            echo -e "${green}Access URL: https://${server_ip}:${existing_port}${existing_webBasePath}${plain}"
+        fi
+    else
+        echo -e "${green}Access URL: http://${server_ip}:${existing_port}${existing_webBasePath}${plain}"
+    fi
 }
 
 set_port() {
-    port=$(gum input --placeholder "Enter new port (1-65535)" --value "8080")
-    if [[ -n "${port}" ]]; then
+    echo -n "Enter port number[1-65535]: "
+    read -r port
+    if [[ -z "${port}" ]]; then
+        LOGD "Cancelled"
+        before_show_menu
+    else
         /usr/local/x-ui/x-ui setting -port ${port}
-        gum style --foreground 46 "Port set to $port. Restarting..."
-        restart 0
+        echo -e "The port is set, Please restart the panel now, and use the new port ${green}${port}${plain} to access web panel"
+        confirm_restart
     fi
 }
 
 start() {
     check_status
     if [[ $? == 0 ]]; then
-        gum style --foreground 220 "Panel is already running."
+        echo ""
+        LOGI "Panel is running, No need to start again, If you need to restart, please select restart"
     else
         if [[ $release == "alpine" ]]; then
             rc-service x-ui start
@@ -229,15 +285,24 @@ start() {
             systemctl start x-ui
         fi
         sleep 2
-        gum style --foreground 46 "Panel started."
+        check_status
+        if [[ $? == 0 ]]; then
+            LOGI "x-ui Started Successfully"
+        else
+            LOGE "panel Failed to start, Probably because it takes longer than two seconds to start, Please check the log information later"
+        fi
     fi
-    if [[ $# == 0 ]]; then gum style --foreground 240 "Press Enter..."; read; fi
+
+    if [[ $# == 0 ]]; then
+        before_show_menu
+    fi
 }
 
 stop() {
     check_status
     if [[ $? == 1 ]]; then
-        gum style --foreground 220 "Panel is already stopped."
+        echo ""
+        LOGI "Panel stopped, No need to stop again!"
     else
         if [[ $release == "alpine" ]]; then
             rc-service x-ui stop
@@ -245,9 +310,17 @@ stop() {
             systemctl stop x-ui
         fi
         sleep 2
-        gum style --foreground 46 "Panel stopped."
+        check_status
+        if [[ $? == 1 ]]; then
+            LOGI "x-ui and xray stopped successfully"
+        else
+            LOGE "Panel stop failed, Probably because the stop time exceeds two seconds, Please check the log information later"
+        fi
     fi
-    if [[ $# == 0 ]]; then gum style --foreground 240 "Press Enter..."; read; fi
+
+    if [[ $# == 0 ]]; then
+        before_show_menu
+    fi
 }
 
 restart() {
@@ -257,8 +330,26 @@ restart() {
         systemctl restart x-ui
     fi
     sleep 2
-    gum style --foreground 46 "Panel restarted."
-    if [[ $# == 0 ]]; then gum style --foreground 240 "Press Enter..."; read; fi
+    check_status
+    if [[ $? == 0 ]]; then
+        LOGI "x-ui and xray Restarted successfully"
+    else
+        LOGE "Panel restart failed, Probably because it takes longer than two seconds to start, Please check the log information later"
+    fi
+    if [[ $# == 0 ]]; then
+        before_show_menu
+    fi
+}
+
+status() {
+    if [[ $release == "alpine" ]]; then
+        rc-service x-ui status
+    else
+        systemctl status x-ui -l
+    fi
+    if [[ $# == 0 ]]; then
+        before_show_menu
+    fi
 }
 
 enable() {
@@ -267,8 +358,15 @@ enable() {
     else
         systemctl enable x-ui
     fi
-    gum style --foreground 46 "Autostart enabled."
-    gum style --foreground 240 "Press Enter..."; read
+    if [[ $? == 0 ]]; then
+        LOGI "x-ui Set to boot automatically on startup successfully"
+    else
+        LOGE "x-ui Failed to set Autostart"
+    fi
+
+    if [[ $# == 0 ]]; then
+        before_show_menu
+    fi
 }
 
 disable() {
@@ -277,222 +375,912 @@ disable() {
     else
         systemctl disable x-ui
     fi
-    gum style --foreground 46 "Autostart disabled."
-    gum style --foreground 240 "Press Enter..."; read
+    if [[ $? == 0 ]]; then
+        LOGI "x-ui Autostart Cancelled successfully"
+    else
+        LOGE "x-ui Failed to cancel autostart"
+    fi
+
+    if [[ $# == 0 ]]; then
+        before_show_menu
+    fi
 }
 
 show_log() {
     if [[ $release == "alpine" ]]; then
-        gum choose "Debug Log" "Back" | grep -q "Debug" && grep -F 'x-ui[' /var/log/messages
+        echo -e "${green}\t1.${plain} Debug Log"
+        echo -e "${green}\t0.${plain} Back to Main Menu"
+        read -rp "Choose an option: " choice
+
+        case "$choice" in
+        0)
+            show_menu
+            ;;
+        1)
+            grep -F 'x-ui[' /var/log/messages
+            if [[ $# == 0 ]]; then
+                before_show_menu
+            fi
+            ;;
+        *)
+            echo -e "${red}Invalid option. Please select a valid number.${plain}\n"
+            show_log
+            ;;
+        esac
     else
-        CHOICE=$(gum choose "Debug Log" "Clear Logs" "Back")
-        case $CHOICE in
-            "Debug Log") journalctl -u x-ui -e --no-pager -f -p debug ;;
-            "Clear Logs")
-                sudo journalctl --rotate
-                sudo journalctl --vacuum-time=1s
-                gum style --foreground 46 "Logs cleared."
-                restart 0
+        echo -e "${green}\t1.${plain} Debug Log"
+        echo -e "${green}\t2.${plain} Clear All logs"
+        echo -e "${green}\t0.${plain} Back to Main Menu"
+        read -rp "Choose an option: " choice
+
+        case "$choice" in
+        0)
+            show_menu
+            ;;
+        1)
+            journalctl -u x-ui -e --no-pager -f -p debug
+            if [[ $# == 0 ]]; then
+                before_show_menu
+            fi
+            ;;
+        2)
+            sudo journalctl --rotate
+            sudo journalctl --vacuum-time=1s
+            echo "All Logs cleared."
+            restart
+            ;;
+        *)
+            echo -e "${red}Invalid option. Please select a valid number.${plain}\n"
+            show_log
             ;;
         esac
     fi
 }
 
-# --- BBR Functions ---
-enable_bbr() {
-    if grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf && grep -q "net.ipv4.tcp_congestion_control=bbr" /etc/sysctl.conf; then
-        gum style --foreground 220 "BBR already enabled."
-        return
-    fi
-    # Install deps
-    case "${release}" in
-        ubuntu | debian | armbian) apt-get update && apt-get install -yqq --no-install-recommends ca-certificates ;;
-        fedora | amzn | virtuozzo | rhel | almalinux | rocky | ol) dnf -y update && dnf -y install ca-certificates ;;
-        centos)
-            if [[ "${VERSION_ID}" =~ ^7 ]]; then yum -y update && yum -y install ca-certificates; else dnf -y update && dnf -y install ca-certificates; fi ;;
-        arch | manjaro | parch) pacman -Sy --noconfirm ca-certificates ;;
-        alpine) apk add ca-certificates ;;
+bbr_menu() {
+    echo -e "${green}\t1.${plain} Enable BBR"
+    echo -e "${green}\t2.${plain} Disable BBR"
+    echo -e "${green}\t0.${plain} Back to Main Menu"
+    read -rp "Choose an option: " choice
+    case "$choice" in
+    0)
+        show_menu
+        ;;
+    1)
+        enable_bbr
+        bbr_menu
+        ;;
+    2)
+        disable_bbr
+        bbr_menu
+        ;;
+    *)
+        echo -e "${red}Invalid option. Please select a valid number.${plain}\n"
+        bbr_menu
+        ;;
     esac
-    echo "net.core.default_qdisc=fq" | tee -a /etc/sysctl.conf
-    echo "net.ipv4.tcp_congestion_control=bbr" | tee -a /etc/sysctl.conf
-    sysctl -p
-    gum style --foreground 46 "BBR Enabled."
 }
 
 disable_bbr() {
-    if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf; then
-        gum style --foreground 220 "BBR is not enabled."
-        return
+
+    if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf || ! grep -q "net.ipv4.tcp_congestion_control=bbr" /etc/sysctl.conf; then
+        echo -e "${yellow}BBR is not currently enabled.${plain}"
+        before_show_menu
     fi
+
+    # Replace BBR with CUBIC configurations
     sed -i 's/net.core.default_qdisc=fq/net.core.default_qdisc=pfifo_fast/' /etc/sysctl.conf
     sed -i 's/net.ipv4.tcp_congestion_control=bbr/net.ipv4.tcp_congestion_control=cubic/' /etc/sysctl.conf
+
+    # Apply changes
     sysctl -p
-    gum style --foreground 46 "BBR Disabled."
+
+    # Verify that BBR is replaced with CUBIC
+    if [[ $(sysctl net.ipv4.tcp_congestion_control | awk '{print $3}') == "cubic" ]]; then
+        echo -e "${green}BBR has been replaced with CUBIC successfully.${plain}"
+    else
+        echo -e "${red}Failed to replace BBR with CUBIC. Please check your system configuration.${plain}"
+    fi
 }
 
-# --- GeoIP Functions ---
-update_geo() {
-    CHOICE=$(gum choose "Loyalsoldier" "chocolate4u" "runetfreedom" "All" "Back")
-    cd /usr/local/x-ui/bin
-    case $CHOICE in
-        "Loyalsoldier")
-            wget -O geoip.dat https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
-            wget -O geosite.dat https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat
-            gum style --foreground 46 "Updated."
-            restart 0
+enable_bbr() {
+    if grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf && grep -q "net.ipv4.tcp_congestion_control=bbr" /etc/sysctl.conf; then
+        echo -e "${green}BBR is already enabled!${plain}"
+        before_show_menu
+    fi
+
+    # Check the OS and install necessary packages
+    case "${release}" in
+    ubuntu | debian | armbian)
+        apt-get update && apt-get install -yqq --no-install-recommends ca-certificates
         ;;
-        "chocolate4u")
-            wget -O geoip_IR.dat https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geoip.dat
-            wget -O geosite_IR.dat https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geosite.dat
-            gum style --foreground 46 "Updated."
-            restart 0
+    fedora | amzn | virtuozzo | rhel | almalinux | rocky | ol)
+        dnf -y update && dnf -y install ca-certificates
         ;;
-        "runetfreedom")
-            wget -O geoip_RU.dat https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geoip.dat
-            wget -O geosite_RU.dat https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat
-            gum style --foreground 46 "Updated."
-            restart 0
+    centos)
+            if [[ "${VERSION_ID}" =~ ^7 ]]; then
+                yum -y update && yum -y install ca-certificates
+            else
+                dnf -y update && dnf -y install ca-certificates
+            fi
         ;;
-        "All")
-            wget -O geoip.dat https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
-            wget -O geosite.dat https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat
-            wget -O geoip_IR.dat https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geoip.dat
-            wget -O geosite_IR.dat https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geosite.dat
-            wget -O geoip_RU.dat https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geoip.dat
-            wget -O geosite_RU.dat https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat
-            gum style --foreground 46 "All updated."
-            restart 0
+    arch | manjaro | parch)
+        pacman -Sy --noconfirm ca-certificates
+        ;;
+	opensuse-tumbleweed | opensuse-leap)
+        zypper refresh && zypper -q install -y ca-certificates
+        ;;
+    alpine)
+        apk add ca-certificates
+        ;;
+    *)
+        echo -e "${red}Unsupported operating system. Please check the script and install the necessary packages manually.${plain}\n"
+        exit 1
         ;;
     esac
+
+    # Enable BBR
+    echo "net.core.default_qdisc=fq" | tee -a /etc/sysctl.conf
+    echo "net.ipv4.tcp_congestion_control=bbr" | tee -a /etc/sysctl.conf
+
+    # Apply changes
+    sysctl -p
+
+    # Verify that BBR is enabled
+    if [[ $(sysctl net.ipv4.tcp_congestion_control | awk '{print $3}') == "bbr" ]]; then
+        echo -e "${green}BBR has been enabled successfully.${plain}"
+    else
+        echo -e "${red}Failed to enable BBR. Please check your system configuration.${plain}"
+    fi
 }
 
-# --- Caddy Management (New) ---
-manage_caddy() {
-    CADDY_CONFIG="/etc/caddy/Caddyfile"
-    
-    while true; do
-        show_header
-        ACTION=$(gum choose \
-            "← Back to Menu" \
-            "Install Caddy" \
-            "Add/Edit Domain" \
-            "Edit Caddyfile Manually" \
-            "Restart Caddy" \
-            "View Caddy Logs" \
-            "Uninstall Caddy"
-        )
-
-        case $ACTION in
-            "← Back to Menu") break ;;
-            "Install Caddy")
-                if command -v caddy &> /dev/null; then
-                    gum style --foreground 220 "Caddy is already installed."
-                else
-                    if gum confirm "Install Caddy Server?"; then
-                        case "${release}" in
-                            ubuntu|debian|armbian)
-                                apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
-                                curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-                                curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
-                                apt update && apt install caddy -y
-                            ;;
-                            fedora|rhel|almalinux|rocky)
-                                dnf install 'dnf-command(copr)' -y
-                                dnf copr enable @caddy/caddy -y
-                                dnf install caddy -y
-                            ;;
-                            *)
-                                gum style --foreground 196 "Unsupported OS for auto-install."
-                            ;;
-                        esac
-                        gum style --foreground 46 "Installation finished."
-                    fi
-                fi
-            ;;
-            "Add/Edit Domain")
-                if ! command -v caddy &> /dev/null; then
-                    gum style --foreground 196 "Caddy is not installed."
-                    continue
-                fi
-                
-                DOMAIN=$(gum input --placeholder "Domain (e.g. panel.example.com)")
-                [[ -z "$DOMAIN" ]] && continue
-                
-                PORT=$(gum input --placeholder "Local Port (e.g. 8080)")
-                [[ -z "$PORT" ]] && continue
-                
-                # Simple append logic
-                cat >> "$CADDY_CONFIG" <<EOF
- $DOMAIN {
-    reverse_proxy 127.0.0.1:$PORT
+update_shell() {
+    wget -O /usr/bin/x-ui -N https://github.com/drafwodgaming/3x-ui-caddy/raw/main/x-ui.sh
+    if [[ $? != 0 ]]; then
+        echo ""
+        LOGE "Failed to download script, Please check whether the machine can connect Github"
+        before_show_menu
+    else
+        chmod +x /usr/bin/x-ui
+        LOGI "Upgrade script succeeded, Please rerun the script"
+        before_show_menu
+    fi
 }
-EOF
-                gum style --foreground 46 "Domain added. Restarting Caddy..."
-                systemctl restart caddy
+
+# 0: running, 1: not running, 2: not installed
+check_status() {
+    if [[ $release == "alpine" ]]; then
+        if [[ ! -f /etc/init.d/x-ui ]]; then
+            return 2
+        fi
+        if [[ $(rc-service x-ui status | grep -F 'status: started' -c) == 1 ]]; then
+            return 0
+        else
+            return 1
+        fi
+    else
+        if [[ ! -f /etc/systemd/system/x-ui.service ]]; then
+            return 2
+        fi
+        temp=$(systemctl status x-ui | grep Active | awk '{print $3}' | cut -d "(" -f2 | cut -d ")" -f1)
+        if [[ "${temp}" == "running" ]]; then
+            return 0
+        else
+            return 1
+        fi
+    fi
+}
+
+check_enabled() {
+    if [[ $release == "alpine" ]]; then
+        if [[ $(rc-update show | grep -F 'x-ui' | grep default -c) == 1 ]]; then
+            return 0
+        else
+            return 1
+        fi
+    else
+        temp=$(systemctl is-enabled x-ui)
+        if [[ "${temp}" == "enabled" ]]; then
+            return 0
+        else
+            return 1
+        fi
+    fi
+}
+
+check_uninstall() {
+    check_status
+    if [[ $? != 2 ]]; then
+        echo ""
+        LOGE "Panel installed, Please do not reinstall"
+        if [[ $# == 0 ]]; then
+            before_show_menu
+        fi
+        return 1
+    else
+        return 0
+    fi
+}
+
+check_install() {
+    check_status
+    if [[ $? == 2 ]]; then
+        echo ""
+        LOGE "Please install the panel first"
+        if [[ $# == 0 ]]; then
+            before_show_menu
+        fi
+        return 1
+    else
+        return 0
+    fi
+}
+
+show_status() {
+    check_status
+    case $? in
+    0)
+        echo -e "Panel state: ${green}Running${plain}"
+        show_enable_status
+        ;;
+    1)
+        echo -e "Panel state: ${yellow}Not Running${plain}"
+        show_enable_status
+        ;;
+    2)
+        echo -e "Panel state: ${red}Not Installed${plain}"
+        ;;
+    esac
+    show_xray_status
+}
+
+show_enable_status() {
+    check_enabled
+    if [[ $? == 0 ]]; then
+        echo -e "Start automatically: ${green}Yes${plain}"
+    else
+        echo -e "Start automatically: ${red}No${plain}"
+    fi
+}
+
+check_xray_status() {
+    count=$(ps -ef | grep "xray-linux" | grep -v "grep" | wc -l)
+    if [[ count -ne 0 ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+show_xray_status() {
+    check_xray_status
+    if [[ $? == 0 ]]; then
+        echo -e "xray state: ${green}Running${plain}"
+    else
+        echo -e "xray state: ${red}Not Running${plain}"
+    fi
+}
+
+update_all_geofiles() {
+        update_main_geofiles
+        update_ir_geofiles
+        update_ru_geofiles
+}
+
+update_main_geofiles() {
+        wget -O geoip.dat       https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
+        wget -O geosite.dat     https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat
+}
+
+update_ir_geofiles() {
+        wget -O geoip_IR.dat    https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geoip.dat
+        wget -O geosite_IR.dat  https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geosite.dat
+}
+
+update_ru_geofiles() {
+        wget -O geoip_RU.dat    https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geoip.dat
+        wget -O geosite_RU.dat  https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat
+}
+
+update_geo() {
+    echo -e "${green}\t1.${plain} Loyalsoldier (geoip.dat, geosite.dat)"
+    echo -e "${green}\t2.${plain} chocolate4u (geoip_IR.dat, geosite_IR.dat)"
+    echo -e "${green}\t3.${plain} runetfreedom (geoip_RU.dat, geosite_RU.dat)"
+    echo -e "${green}\t4.${plain} All"
+    echo -e "${green}\t0.${plain} Back to Main Menu"
+    read -rp "Choose an option: " choice
+
+    cd /usr/local/x-ui/bin
+
+    case "$choice" in
+    0)
+        show_menu
+        ;;
+    1)
+        update_main_geofiles
+        echo -e "${green}Loyalsoldier datasets have been updated successfully!${plain}"
+        restart
+        ;;
+    2)
+        update_ir_geofiles
+        echo -e "${green}chocolate4u datasets have been updated successfully!${plain}"
+        restart
+        ;;
+    3)
+        update_ru_geofiles
+        echo -e "${green}runetfreedom datasets have been updated successfully!${plain}"
+        restart
+        ;;
+    4)
+        update_all_geofiles
+        echo -e "${green}All geo files have been updated successfully!${plain}"
+        restart
+        ;;
+    *)
+        echo -e "${red}Invalid option. Please select a valid number.${plain}\n"
+        update_geo
+        ;;
+    esac
+
+    before_show_menu
+}
+
+install_acme() {
+    # Check if acme.sh is already installed
+    if command -v ~/.acme.sh/acme.sh &>/dev/null; then
+        LOGI "acme.sh is already installed."
+        return 0
+    fi
+
+    LOGI "Installing acme.sh..."
+    cd ~ || return 1 # Ensure you can change to the home directory
+
+    curl -s https://get.acme.sh | sh
+    if [ $? -ne 0 ]; then
+        LOGE "Installation of acme.sh failed."
+        return 1
+    else
+        LOGI "Installation of acme.sh succeeded."
+    fi
+
+    return 0
+}
+
+ssl_cert_issue() {
+    local existing_webBasePath=$(/usr/local/x-ui/x-ui setting -show true | grep -Eo 'webBasePath: .+' | awk '{print $2}')
+    local existing_port=$(/usr/local/x-ui/x-ui setting -show true | grep -Eo 'port: .+' | awk '{print $2}')
+    # check for acme.sh first
+    if ! command -v ~/.acme.sh/acme.sh &>/dev/null; then
+        echo "acme.sh could not be found. we will install it"
+        install_acme
+        if [ $? -ne 0 ]; then
+            LOGE "install acme failed, please check logs"
+            exit 1
+        fi
+    fi
+
+    # install socat second
+    case "${release}" in
+    ubuntu | debian | armbian)
+        apt-get update && apt-get install socat -y
+        ;;
+    fedora | amzn | virtuozzo | rhel | almalinux | rocky | ol)
+        dnf -y update && dnf -y install socat
+        ;;
+    centos)
+            if [[ "${VERSION_ID}" =~ ^7 ]]; then
+                yum -y update && yum -y install socat
+            else
+                dnf -y update && dnf -y install socat
+            fi
+        ;;
+    arch | manjaro | parch)
+        pacman -Sy --noconfirm socat
+        ;;
+	opensuse-tumbleweed | opensuse-leap)
+        zypper refresh && zypper -q install -y socat
+        ;;
+    alpine)
+        apk add socat curl openssl
+        ;;
+    *)
+        echo -e "${red}Unsupported operating system. Please check the script and install the necessary packages manually.${plain}\n"
+        exit 1
+        ;;
+    esac
+    if [ $? -ne 0 ]; then
+        LOGE "install socat failed, please check logs"
+        exit 1
+    else
+        LOGI "install socat succeed..."
+    fi
+
+    # get the domain here, and we need to verify it
+    local domain=""
+    read -rp "Please enter your domain name: " domain
+    LOGD "Your domain is: ${domain}, checking it..."
+
+    # check if there already exists a certificate
+    local currentCert=$(~/.acme.sh/acme.sh --list | tail -1 | awk '{print $1}')
+    if [ "${currentCert}" == "${domain}" ]; then
+        local certInfo=$(~/.acme.sh/acme.sh --list)
+        LOGE "System already has certificates for this domain. Cannot issue again. Current certificate details:"
+        LOGI "$certInfo"
+        exit 1
+    else
+        LOGI "Your domain is ready for issuing certificates now..."
+    fi
+
+    # create a directory for the certificate
+    certPath="/root/cert/${domain}"
+    if [ ! -d "$certPath" ]; then
+        mkdir -p "$certPath"
+    else
+        rm -rf "$certPath"
+        mkdir -p "$certPath"
+    fi
+
+    # get the port number for the standalone server
+    local WebPort=80
+    read -rp "Please choose which port to use (default is 80): " WebPort
+    if [[ ${WebPort} -gt 65535 || ${WebPort} -lt 1 ]]; then
+        LOGE "Your input ${WebPort} is invalid, will use default port 80."
+        WebPort=80
+    fi
+    LOGI "Will use port: ${WebPort} to issue certificates. Please make sure this port is open."
+
+    # issue the certificate
+    ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+    ~/.acme.sh/acme.sh --issue -d ${domain} --listen-v6 --standalone --httpport ${WebPort} --force
+    if [ $? -ne 0 ]; then
+        LOGE "Issuing certificate failed, please check logs."
+        rm -rf ~/.acme.sh/${domain}
+        exit 1
+    else
+        LOGE "Issuing certificate succeeded, installing certificates..."
+    fi
+
+    reloadCmd="x-ui restart"
+
+    LOGI "Default --reloadcmd for ACME is: ${yellow}x-ui restart"
+    LOGI "This command will run on every certificate issue and renew."
+    read -rp "Would you like to modify --reloadcmd for ACME? (y/n): " setReloadcmd
+    if [[ "$setReloadcmd" == "y" || "$setReloadcmd" == "Y" ]]; then
+        echo -e "\n${green}\t1.${plain} Preset: systemctl reload nginx ; x-ui restart"
+        echo -e "${green}\t2.${plain} Input your own command"
+        echo -e "${green}\t0.${plain} Keep default reloadcmd"
+        read -rp "Choose an option: " choice
+        case "$choice" in
+        1)
+            LOGI "Reloadcmd is: systemctl reload nginx ; x-ui restart"
+            reloadCmd="systemctl reload nginx ; x-ui restart"
             ;;
-            "Edit Caddyfile Manually")
-                if [[ -f "$CADDY_CONFIG" ]]; then
-                    nano "$CADDY_CONFIG"
-                    if gum confirm "Restart Caddy to apply changes?"; then
-                        systemctl restart caddy
-                    fi
-                else
-                    gum style --foreground 196 "Caddyfile not found."
-                fi
+        2)  
+            LOGD "It's recommended to put x-ui restart at the end, so it won't raise an error if other services fails"
+            read -rp "Please enter your reloadcmd (example: systemctl reload nginx ; x-ui restart): " reloadCmd
+            LOGI "Your reloadcmd is: ${reloadCmd}"
             ;;
-            "Restart Caddy")
-                systemctl restart caddy && gum style --foreground 46 "Restarted" || gum style --foreground 196 "Failed"
-            ;;
-            "View Caddy Logs")
-                journalctl -u caddy -f -n 50
-            ;;
-            "Uninstall Caddy")
-                if gum confirm "Uninstall Caddy?"; then
-                    systemctl stop caddy
-                    systemctl disable caddy
-                    apt remove caddy -y 2>/dev/null || dnf remove caddy -y 2>/dev/null
-                    gum style --foreground 46 "Removed."
-                fi
+        *)
+            LOGI "Keep default reloadcmd"
             ;;
         esac
-        gum style --foreground 240 "Press Enter..."; read
-    done
+    fi
+
+    # install the certificate
+    ~/.acme.sh/acme.sh --installcert -d ${domain} \
+        --key-file /root/cert/${domain}/privkey.pem \
+        --fullchain-file /root/cert/${domain}/fullchain.pem --reloadcmd "${reloadCmd}"
+
+    if [ $? -ne 0 ]; then
+        LOGE "Installing certificate failed, exiting."
+        rm -rf ~/.acme.sh/${domain}
+        exit 1
+    else
+        LOGI "Installing certificate succeeded, enabling auto renew..."
+    fi
+
+    # enable auto-renew
+    ~/.acme.sh/acme.sh --upgrade --auto-upgrade
+    if [ $? -ne 0 ]; then
+        LOGE "Auto renew failed, certificate details:"
+        ls -lah cert/*
+        chmod 755 $certPath/*
+        exit 1
+    else
+        LOGI "Auto renew succeeded, certificate details:"
+        ls -lah cert/*
+        chmod 755 $certPath/*
+    fi
+
+    # Prompt user to set panel paths after successful certificate installation
+    read -rp "Would you like to set this certificate for the panel? (y/n): " setPanel
+    if [[ "$setPanel" == "y" || "$setPanel" == "Y" ]]; then
+        local webCertFile="/root/cert/${domain}/fullchain.pem"
+        local webKeyFile="/root/cert/${domain}/privkey.pem"
+
+        if [[ -f "$webCertFile" && -f "$webKeyFile" ]]; then
+            /usr/local/x-ui/x-ui cert -webCert "$webCertFile" -webCertKey "$webKeyFile"
+            LOGI "Panel paths set for domain: $domain"
+            LOGI "  - Certificate File: $webCertFile"
+            LOGI "  - Private Key File: $webKeyFile"
+            echo -e "${green}Access URL: https://${domain}:${existing_port}${existing_webBasePath}${plain}"
+            restart
+        else
+            LOGE "Error: Certificate or private key file not found for domain: $domain."
+        fi
+    else
+        LOGI "Skipping panel path setting."
+    fi
 }
 
-# --- Fail2Ban / IP Limit ---
-show_banlog() {
-    gum style --foreground 86 "Checking ban logs..."
-    if [[ -f "/var/log/fail2ban.log" ]]; then
-        gum style --foreground 240 "System Fail2ban logs:"
-        grep "3x-ipl" /var/log/fail2ban.log | grep -E "Ban|Unban" | tail -n 10 || echo "None found"
+run_speedtest() {
+    # Check if Speedtest is already installed
+    if ! command -v speedtest &>/dev/null; then
+        # If not installed, determine installation method
+        if command -v snap &>/dev/null; then
+            # Use snap to install Speedtest
+            echo "Installing Speedtest using snap..."
+            snap install speedtest
+        else
+            # Fallback to using package managers
+            local pkg_manager=""
+            local speedtest_install_script=""
+
+            if command -v dnf &>/dev/null; then
+                pkg_manager="dnf"
+                speedtest_install_script="https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.rpm.sh"
+            elif command -v yum &>/dev/null; then
+                pkg_manager="yum"
+                speedtest_install_script="https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.rpm.sh"
+            elif command -v apt-get &>/dev/null; then
+                pkg_manager="apt-get"
+                speedtest_install_script="https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh"
+            elif command -v apt &>/dev/null; then
+                pkg_manager="apt"
+                speedtest_install_script="https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh"
+            fi
+
+            if [[ -z $pkg_manager ]]; then
+                echo "Error: Package manager not found. You may need to install Speedtest manually."
+                return 1
+            else
+                echo "Installing Speedtest using $pkg_manager..."
+                curl -s $speedtest_install_script | bash
+                $pkg_manager install -y speedtest
+            fi
+        fi
     fi
-    if [[ -f "${iplimit_banned_log_path}" ]]; then
-        gum style --foreground 240 "Custom 3X-UI logs:"
-        grep -v "INIT" "${iplimit_banned_log_path}" | tail -n 10 || echo "None found"
-    fi
-    gum style --foreground 240 "Press Enter..."; read
+
+    speedtest
+}
+
+
+
+ip_validation() {
+    ipv6_regex="^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$"
+    ipv4_regex="^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]?|0)\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]?|0)$"
+}
+
+iplimit_main() {
+    echo -e "\n${green}\t1.${plain} Install Fail2ban and configure IP Limit"
+    echo -e "${green}\t2.${plain} Change Ban Duration"
+    echo -e "${green}\t3.${plain} Unban Everyone"
+    echo -e "${green}\t4.${plain} Ban Logs"
+    echo -e "${green}\t5.${plain} Ban an IP Address"
+    echo -e "${green}\t6.${plain} Unban an IP Address"
+    echo -e "${green}\t7.${plain} Real-Time Logs"
+    echo -e "${green}\t8.${plain} Service Status"
+    echo -e "${green}\t9.${plain} Service Restart"
+    echo -e "${green}\t10.${plain} Uninstall Fail2ban and IP Limit"
+    echo -e "${green}\t0.${plain} Back to Main Menu"
+    read -rp "Choose an option: " choice
+    case "$choice" in
+    0)
+        show_menu
+        ;;
+    1)
+        confirm "Proceed with installation of Fail2ban & IP Limit?" "y"
+        if [[ $? == 0 ]]; then
+            install_iplimit
+        else
+            iplimit_main
+        fi
+        ;;
+    2)
+        read -rp "Please enter new Ban Duration in Minutes [default 30]: " NUM
+        if [[ $NUM =~ ^[0-9]+$ ]]; then
+            create_iplimit_jails ${NUM}
+            if [[ $release == "alpine" ]]; then
+                rc-service fail2ban restart
+            else
+                systemctl restart fail2ban
+            fi
+        else
+            echo -e "${red}${NUM} is not a number! Please, try again.${plain}"
+        fi
+        iplimit_main
+        ;;
+    3)
+        confirm "Proceed with Unbanning everyone from IP Limit jail?" "y"
+        if [[ $? == 0 ]]; then
+            fail2ban-client reload --restart --unban 3x-ipl
+            truncate -s 0 "${iplimit_banned_log_path}"
+            echo -e "${green}All users Unbanned successfully.${plain}"
+            iplimit_main
+        else
+            echo -e "${yellow}Cancelled.${plain}"
+        fi
+        iplimit_main
+        ;;
+    4)
+        show_banlog
+        iplimit_main
+        ;;
+    5)
+        read -rp "Enter the IP address you want to ban: " ban_ip
+        ip_validation
+        if [[ $ban_ip =~ $ipv4_regex || $ban_ip =~ $ipv6_regex ]]; then
+            fail2ban-client set 3x-ipl banip "$ban_ip"
+            echo -e "${green}IP Address ${ban_ip} has been banned successfully.${plain}"
+        else
+            echo -e "${red}Invalid IP address format! Please try again.${plain}"
+        fi
+        iplimit_main
+        ;;
+    6)
+        read -rp "Enter the IP address you want to unban: " unban_ip
+        ip_validation
+        if [[ $unban_ip =~ $ipv4_regex || $unban_ip =~ $ipv6_regex ]]; then
+            fail2ban-client set 3x-ipl unbanip "$unban_ip"
+            echo -e "${green}IP Address ${unban_ip} has been unbanned successfully.${plain}"
+        else
+            echo -e "${red}Invalid IP address format! Please try again.${plain}"
+        fi
+        iplimit_main
+        ;;
+    7)
+        tail -f /var/log/fail2ban.log
+        iplimit_main
+        ;;
+    8)
+        service fail2ban status
+        iplimit_main
+        ;;
+    9)
+        if [[ $release == "alpine" ]]; then
+            rc-service fail2ban restart
+        else
+            systemctl restart fail2ban
+        fi
+        iplimit_main
+        ;;
+    10)
+        remove_iplimit
+        iplimit_main
+        ;;
+    *)
+        echo -e "${red}Invalid option. Please select a valid number.${plain}\n"
+        iplimit_main
+        ;;
+    esac
 }
 
 install_iplimit() {
     if ! command -v fail2ban-client &>/dev/null; then
-        gum style --foreground 220 "Installing Fail2ban..."
+        echo -e "${green}Fail2ban is not installed. Installing now...!${plain}\n"
+
+        # Check the OS and install necessary packages
         case "${release}" in
-            ubuntu|debian|armbian) apt-get update && apt-get install fail2ban -y ;;
-            fedora|rhel|almalinux|rocky) dnf -y install fail2ban ;;
-            centos) 
-                if [[ "${VERSION_ID}" =~ ^7 ]]; then yum install epel-release -y && yum install fail2ban -y; else dnf install fail2ban -y; fi ;;
-            arch|manjaro|parch) pacman -Syu --noconfirm fail2ban ;;
-            alpine) apk add fail2ban ;;
+        ubuntu)
+            apt-get update
+            if [[ "${os_version}" -ge 24 ]]; then
+                apt-get install python3-pip -y
+                python3 -m pip install pyasynchat --break-system-packages
+            fi
+            apt-get install fail2ban -y
+            ;;
+        debian)
+            apt-get update
+            if [ "$os_version" -ge 12 ]; then
+                apt-get install -y python3-systemd
+            fi
+            apt-get install -y fail2ban
+            ;;
+        armbian)
+            apt-get update && apt-get install fail2ban -y
+            ;;
+        fedora | amzn | virtuozzo | rhel | almalinux | rocky | ol)
+            dnf -y update && dnf -y install fail2ban
+            ;;
+        centos)
+            if [[ "${VERSION_ID}" =~ ^7 ]]; then
+                yum update -y && yum install epel-release -y
+                yum -y install fail2ban
+            else
+                dnf -y update && dnf -y install fail2ban
+            fi
+            ;;
+        arch | manjaro | parch)
+            pacman -Syu --noconfirm fail2ban
+            ;;
+        alpine)
+            apk add fail2ban
+            ;;
+        *)
+            echo -e "${red}Unsupported operating system. Please check the script and install the necessary packages manually.${plain}\n"
+            exit 1
+            ;;
         esac
+
+        if ! command -v fail2ban-client &>/dev/null; then
+            echo -e "${red}Fail2ban installation failed.${plain}\n"
+            exit 1
+        fi
+
+        echo -e "${green}Fail2ban installed successfully!${plain}\n"
+    else
+        echo -e "${yellow}Fail2ban is already installed.${plain}\n"
     fi
-    
-    gum style --foreground 220 "Configuring IP Limit..."
-    mkdir -p "${iplimit_banned_log_path%/*}"
-    touch "${iplimit_banned_log_path}"
-    touch "${iplimit_log_path}"
-    
-    # Create jail config
-    cat > /etc/fail2ban/jail.d/3x-ipl.conf <<EOF
+
+    echo -e "${green}Configuring IP Limit...${plain}\n"
+
+    # make sure there's no conflict for jail files
+    iplimit_remove_conflicts
+
+    # Check if log file exists
+    if ! test -f "${iplimit_banned_log_path}"; then
+        touch ${iplimit_banned_log_path}
+    fi
+
+    # Check if service log file exists so fail2ban won't return error
+    if ! test -f "${iplimit_log_path}"; then
+        touch ${iplimit_log_path}
+    fi
+
+    # Create the iplimit jail files
+    # we didn't pass the bantime here to use the default value
+    create_iplimit_jails
+
+    # Launching fail2ban
+    if [[ $release == "alpine" ]]; then
+        if [[ $(rc-service fail2ban status | grep -F 'status: started' -c) == 0 ]]; then
+            rc-service fail2ban start
+        else
+            rc-service fail2ban restart
+        fi
+        rc-update add fail2ban
+    else
+        if ! systemctl is-active --quiet fail2ban; then
+            systemctl start fail2ban
+        else
+            systemctl restart fail2ban
+        fi
+        systemctl enable fail2ban
+    fi
+
+    echo -e "${green}IP Limit installed and configured successfully!${plain}\n"
+    before_show_menu
+}
+
+remove_iplimit() {
+    echo -e "${green}\t1.${plain} Only remove IP Limit configurations"
+    echo -e "${green}\t2.${plain} Uninstall Fail2ban and IP Limit"
+    echo -e "${green}\t0.${plain} Back to Main Menu"
+    read -rp "Choose an option: " num
+    case "$num" in
+    1)
+        rm -f /etc/fail2ban/filter.d/3x-ipl.conf
+        rm -f /etc/fail2ban/action.d/3x-ipl.conf
+        rm -f /etc/fail2ban/jail.d/3x-ipl.conf
+        if [[ $release == "alpine" ]]; then
+            rc-service fail2ban restart
+        else
+            systemctl restart fail2ban
+        fi
+        echo -e "${green}IP Limit removed successfully!${plain}\n"
+        before_show_menu
+        ;;
+    2)
+        rm -rf /etc/fail2ban
+        if [[ $release == "alpine" ]]; then
+            rc-service fail2ban stop
+        else
+            systemctl stop fail2ban
+        fi
+        case "${release}" in
+        ubuntu | debian | armbian)
+            apt-get remove -y fail2ban
+            apt-get purge -y fail2ban -y
+            apt-get autoremove -y
+            ;;
+        fedora | amzn | virtuozzo | rhel | almalinux | rocky | ol)
+            dnf remove fail2ban -y
+            dnf autoremove -y
+            ;;
+        centos)
+            if [[ "${VERSION_ID}" =~ ^7 ]]; then    
+                yum remove fail2ban -y
+                yum autoremove -y
+            else
+                dnf remove fail2ban -y
+                dnf autoremove -y
+            fi
+            ;;
+        arch | manjaro | parch)
+            pacman -Rns --noconfirm fail2ban
+            ;;
+        alpine)
+            apk del fail2ban
+            ;;
+        *)
+            echo -e "${red}Unsupported operating system. Please uninstall Fail2ban manually.${plain}\n"
+            exit 1
+            ;;
+        esac
+        echo -e "${green}Fail2ban and IP Limit removed successfully!${plain}\n"
+        before_show_menu
+        ;;
+    0)
+        show_menu
+        ;;
+    *)
+        echo -e "${red}Invalid option. Please select a valid number.${plain}\n"
+        remove_iplimit
+        ;;
+    esac
+}
+
+show_banlog() {
+    local system_log="/var/log/fail2ban.log"
+
+    echo -e "${green}Checking ban logs...${plain}\n"
+
+    if [[ $release == "alpine" ]]; then
+        if [[ $(rc-service fail2ban status | grep -F 'status: started' -c) == 0 ]]; then
+            echo -e "${red}Fail2ban service is not running!${plain}\n"
+            return 1
+        fi
+    else
+        if ! systemctl is-active --quiet fail2ban; then
+            echo -e "${red}Fail2ban service is not running!${plain}\n"
+            return 1
+        fi
+    fi
+
+    if [[ -f "$system_log" ]]; then
+        echo -e "${green}Recent system ban activities from fail2ban.log:${plain}"
+        grep "3x-ipl" "$system_log" | grep -E "Ban|Unban" | tail -n 10 || echo -e "${yellow}No recent system ban activities found${plain}"
+        echo ""
+    fi
+
+    if [[ -f "${iplimit_banned_log_path}" ]]; then
+        echo -e "${green}3X-IPL ban log entries:${plain}"
+        if [[ -s "${iplimit_banned_log_path}" ]]; then
+            grep -v "INIT" "${iplimit_banned_log_path}" | tail -n 10 || echo -e "${yellow}No ban entries found${plain}"
+        else
+            echo -e "${yellow}Ban log file is empty${plain}"
+        fi
+    else
+        echo -e "${red}Ban log file not found at: ${iplimit_banned_log_path}${plain}"
+    fi
+
+    echo -e "\n${green}Current jail status:${plain}"
+    fail2ban-client status 3x-ipl || echo -e "${yellow}Unable to get jail status${plain}"
+}
+
+create_iplimit_jails() {
+    # Use default bantime if not passed => 30 minutes
+    local bantime="${1:-30}"
+
+    # Uncomment 'allowipv6 = auto' in fail2ban.conf
+    sed -i 's/#allowipv6 = auto/allowipv6 = auto/g' /etc/fail2ban/fail2ban.conf
+
+    # On Debian 12+ fail2ban's default backend should be changed to systemd
+    if [[  "${release}" == "debian" && ${os_version} -ge 12 ]]; then
+        sed -i '0,/action =/s/backend = auto/backend = systemd/' /etc/fail2ban/jail.conf
+    fi
+
+    cat << EOF > /etc/fail2ban/jail.d/3x-ipl.conf
 [3x-ipl]
 enabled=true
 backend=auto
@@ -501,203 +1289,327 @@ action=3x-ipl
 logpath=${iplimit_log_path}
 maxretry=2
 findtime=32
-bantime=30m
+bantime=${bantime}m
 EOF
-    cat > /etc/fail2ban/filter.d/3x-ipl.conf <<EOF
+
+    cat << EOF > /etc/fail2ban/filter.d/3x-ipl.conf
 [Definition]
+datepattern = ^%%Y/%%m/%%d %%H:%%M:%%S
 failregex   = \[LIMIT_IP\]\s*Email\s*=\s*<F-USER>.+</F-USER>\s*\|\|\s*SRC\s*=\s*<ADDR>
+ignoreregex =
 EOF
-    cat > /etc/fail2ban/action.d/3x-ipl.conf <<EOF
+
+    cat << EOF > /etc/fail2ban/action.d/3x-ipl.conf
 [INCLUDES]
 before = iptables-allports.conf
+
 [Definition]
-actionban = <iptables> -I f2b-3x-ipl 1 -s <ip> -j <blocktype>
-            echo "\$(date) BAN [IP] = <ip>" >> ${iplimit_banned_log_path}
-actionunban = <iptables> -D f2b-3x-ipl -s <ip> -j <blocktype>
-              echo "\$(date) UNBAN [IP] = <ip>" >> ${iplimit_banned_log_path}
+actionstart = <iptables> -N f2b-<name>
+              <iptables> -A f2b-<name> -j <returntype>
+              <iptables> -I <chain> -p <protocol> -j f2b-<name>
+
+actionstop = <iptables> -D <chain> -p <protocol> -j f2b-<name>
+             <actionflush>
+             <iptables> -X f2b-<name>
+
+actioncheck = <iptables> -n -L <chain> | grep -q 'f2b-<name>[ \t]'
+
+actionban = <iptables> -I f2b-<name> 1 -s <ip> -j <blocktype>
+            echo "\$(date +"%%Y/%%m/%%d %%H:%%M:%%S")   BAN   [Email] = <F-USER> [IP] = <ip> banned for <bantime> seconds." >> ${iplimit_banned_log_path}
+
+actionunban = <iptables> -D f2b-<name> -s <ip> -j <blocktype>
+              echo "\$(date +"%%Y/%%m/%%d %%H:%%M:%%S")   UNBAN   [Email] = <F-USER> [IP] = <ip> unbanned." >> ${iplimit_banned_log_path}
+
+[Init]
+name = default
+protocol = tcp
+chain = INPUT
 EOF
-    
-    systemctl restart fail2ban
-    systemctl enable fail2ban
-    gum style --foreground 46 "IP Limit configured."
+
+    echo -e "${green}Ip Limit jail files created with a bantime of ${bantime} minutes.${plain}"
 }
 
-iplimit_menu() {
-    while true; do
-        show_header
-        ACTION=$(gum choose \
-            "← Back" \
-            "Install/Reconfigure IP Limit" \
-            "View Ban Logs" \
-            "Unban All IPs" \
-            "Service Status"
-        )
-        case $ACTION in
-            "← Back") break ;;
-            "Install/Reconfigure IP Limit") install_iplimit ;;
-            "View Ban Logs") show_banlog ;;
-            "Unban All IPs") fail2ban-client reload --restart --unban 3x-ipl && gum style --foreground 46 "Unbanned all." ;;
-            "Service Status") systemctl status fail2ban ;;
-        esac
-        gum style --foreground 240 "Press Enter..."; read
+iplimit_remove_conflicts() {
+    local jail_files=(
+        /etc/fail2ban/jail.conf
+        /etc/fail2ban/jail.local
+    )
+
+    for file in "${jail_files[@]}"; do
+        # Check for [3x-ipl] config in jail file then remove it
+        if test -f "${file}" && grep -qw '3x-ipl' ${file}; then
+            sed -i "/\[3x-ipl\]/,/^$/d" ${file}
+            echo -e "${yellow}Removing conflicts of [3x-ipl] in jail (${file})!${plain}\n"
+        fi
     done
 }
 
-# --- SSH Port Forwarding ---
-ssh_port_menu() {
-    local existing_port=$(/usr/local/x-ui/x-ui setting -show true | grep -Eo 'port: .+' | awk '{print $2}')
-    local existing_listen=$(/usr/local/x-ui/x-ui setting -getListen true | grep -Eo 'listenIP: .+' | awk '{print $2}')
-    
-    ACTION=$(gum choose \
-        "← Back" \
-        "Set Listen IP (SSH Tunnel)" \
-        "Clear Listen IP" \
-        "Show Current Command"
+SSH_port_forwarding() {
+    local URL_lists=(
+        "https://api4.ipify.org"
+		"https://ipv4.icanhazip.com"
+		"https://v4.api.ipinfo.io/ip"
+		"https://ipv4.myexternalip.com/raw"
+		"https://4.ident.me"
+		"https://check-host.net/ip"
     )
-    
-    case $ACTION in
-        "← Back") return ;;
-        "Set Listen IP (SSH Tunnel)")
-            IP=$(gum input --placeholder "IP (default 127.0.0.1)" --value "127.0.0.1")
-            /usr/local/x-ui/x-ui setting -listenIP "$IP"
-            gum style --foreground 46 "Listen set to $IP. Restart panel."
-            restart 0
+    local server_ip=""
+    for ip_address in "${URL_lists[@]}"; do
+        server_ip=$(curl -s --max-time 3 "${ip_address}" 2>/dev/null | tr -d '[:space:]')
+        if [[ -n "${server_ip}" ]]; then
+            break
+        fi
+    done
+    local existing_webBasePath=$(/usr/local/x-ui/x-ui setting -show true | grep -Eo 'webBasePath: .+' | awk '{print $2}')
+    local existing_port=$(/usr/local/x-ui/x-ui setting -show true | grep -Eo 'port: .+' | awk '{print $2}')
+    local existing_listenIP=$(/usr/local/x-ui/x-ui setting -getListen true | grep -Eo 'listenIP: .+' | awk '{print $2}')
+    local existing_cert=$(/usr/local/x-ui/x-ui setting -getCert true | grep -Eo 'cert: .+' | awk '{print $2}')
+    local existing_key=$(/usr/local/x-ui/x-ui setting -getCert true | grep -Eo 'key: .+' | awk '{print $2}')
+
+    local config_listenIP=""
+    local listen_choice=""
+
+    if [[ -n "$existing_cert" && -n "$existing_key" ]]; then
+        echo -e "${green}Panel is secure with SSL.${plain}"
+        before_show_menu
+    fi
+    if [[ -z "$existing_cert" && -z "$existing_key" && (-z "$existing_listenIP" || "$existing_listenIP" == "0.0.0.0") ]]; then
+        echo -e "\n${red}Warning: No Cert and Key found! The panel is not secure.${plain}"
+        echo "Please obtain a certificate or set up SSH port forwarding."
+    fi
+
+    if [[ -n "$existing_listenIP" && "$existing_listenIP" != "0.0.0.0" && (-z "$existing_cert" && -z "$existing_key") ]]; then
+        echo -e "\n${green}Current SSH Port Forwarding Configuration:${plain}"
+        echo -e "Standard SSH command:"
+        echo -e "${yellow}ssh -L 2222:${existing_listenIP}:${existing_port} root@${server_ip}${plain}"
+        echo -e "\nIf using SSH key:"
+        echo -e "${yellow}ssh -i <sshkeypath> -L 2222:${existing_listenIP}:${existing_port} root@${server_ip}${plain}"
+        echo -e "\nAfter connecting, access the panel at:"
+        echo -e "${yellow}http://localhost:2222${existing_webBasePath}${plain}"
+    fi
+
+    echo -e "\nChoose an option:"
+    echo -e "${green}1.${plain} Set listen IP"
+    echo -e "${green}2.${plain} Clear listen IP"
+    echo -e "${green}0.${plain} Back to Main Menu"
+    read -rp "Choose an option: " num
+
+    case "$num" in
+    1)
+        if [[ -z "$existing_listenIP" || "$existing_listenIP" == "0.0.0.0" ]]; then
+            echo -e "\nNo listenIP configured. Choose an option:"
+            echo -e "1. Use default IP (127.0.0.1)"
+            echo -e "2. Set a custom IP"
+            read -rp "Select an option (1 or 2): " listen_choice
+
+            config_listenIP="127.0.0.1"
+            [[ "$listen_choice" == "2" ]] && read -rp "Enter custom IP to listen on: " config_listenIP
+
+            /usr/local/x-ui/x-ui setting -listenIP "${config_listenIP}" >/dev/null 2>&1
+            echo -e "${green}listen IP has been set to ${config_listenIP}.${plain}"
+            echo -e "\n${green}SSH Port Forwarding Configuration:${plain}"
+            echo -e "Standard SSH command:"
+            echo -e "${yellow}ssh -L 2222:${config_listenIP}:${existing_port} root@${server_ip}${plain}"
+            echo -e "\nIf using SSH key:"
+            echo -e "${yellow}ssh -i <sshkeypath> -L 2222:${config_listenIP}:${existing_port} root@${server_ip}${plain}"
+            echo -e "\nAfter connecting, access the panel at:"
+            echo -e "${yellow}http://localhost:2222${existing_webBasePath}${plain}"
+            restart
+        else
+            config_listenIP="${existing_listenIP}"
+            echo -e "${green}Current listen IP is already set to ${config_listenIP}.${plain}"
+        fi
         ;;
-        "Clear Listen IP")
-            /usr/local/x-ui/x-ui setting -listenIP 0.0.0.0
-            restart 0
+    2)
+        /usr/local/x-ui/x-ui setting -listenIP 0.0.0.0 >/dev/null 2>&1
+        echo -e "${green}Listen IP has been cleared.${plain}"
+        restart
         ;;
-        "Show Current Command")
-            [[ -z "$existing_listen" || "$existing_listen" == "0.0.0.0" ]] && existing_listen="SERVER_IP"
-            gum style --foreground 212 "ssh -L 2222:${existing_listen}:${existing_port} root@YOUR_SERVER_IP"
+    0)
+        show_menu
+        ;;
+    *)
+        echo -e "${red}Invalid option. Please select a valid number.${plain}\n"
+        SSH_port_forwarding
         ;;
     esac
 }
 
-# --- SSL (ACME) ---
-ssl_cert_issue() {
-    gum style --foreground 220 "Note: This is a simplified SSL issuer. Ensure port 80 is open."
-    if ! command -v ~/.acme.sh/acme.sh &>/dev/null; then
-        gum style --foreground 220 "Installing acme.sh..."
-        curl -s https://get.acme.sh | sh
-    fi
-    DOMAIN=$(gum input --placeholder "Domain Name")
-    [[ -z "$DOMAIN" ]] && return
-    
-    ~/.acme.sh/acme.sh --issue -d ${DOMAIN} --standalone
-    if [[ $? -eq 0 ]]; then
-        gum style --foreground 46 "Certificate issued!"
-        gum style --foreground 240 "Applying to panel..."
-        ~/.acme.sh/acme.sh --installcert -d ${DOMAIN} \
-            --key-file /root/cert/${domain}/privkey.pem \
-            --fullchain-file /root/cert/${domain}/fullchain.pem \
-            --reloadcmd "x-ui restart"
-    else
-        gum style --foreground 196 "Failed to issue certificate."
-    fi
+show_usage() {
+    echo -e "┌────────────────────────────────────────────────────────────────┐
+│  ${blue}x-ui control menu usages (subcommands):${plain}                       │
+│                                                                │
+│  ${blue}x-ui${plain}                       - Admin Management Script          │
+│  ${blue}x-ui start${plain}                 - Start                            │
+│  ${blue}x-ui stop${plain}                  - Stop                             │
+│  ${blue}x-ui restart${plain}               - Restart                          │
+│  ${blue}x-ui status${plain}                - Current Status                   │
+│  ${blue}x-ui settings${plain}              - Current Settings                 │
+│  ${blue}x-ui enable${plain}                - Enable Autostart on OS Startup   │
+│  ${blue}x-ui disable${plain}               - Disable Autostart on OS Startup  │
+│  ${blue}x-ui log${plain}                   - Check logs                       │
+│  ${blue}x-ui banlog${plain}                - Check Fail2ban ban logs          │
+│  ${blue}x-ui update${plain}                - Update                           │
+│  ${blue}x-ui update-all-geofiles${plain}   - Update all geo files             │
+│  ${blue}x-ui legacy${plain}                - Legacy version                   │
+│  ${blue}x-ui install${plain}               - Install                          │
+│  ${blue}x-ui uninstall${plain}             - Uninstall                        │
+└────────────────────────────────────────────────────────────────┘"
 }
 
-# --- Speedtest ---
-run_speedtest() {
-    if ! command -v speedtest &>/dev/null; then
-        gum style --foreground 220 "Installing Speedtest..."
-        if command -v snap &>/dev/null; then snap install speedtest;
-        elif command -v apt &>/dev/null; then curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | bash && apt install speedtest -y;
-        elif command -v dnf &>/dev/null; then curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.rpm.sh | bash && dnf install speedtest -y;
-        fi
-    fi
-    speedtest
+show_menu() {
+    echo -e "
+╔────────────────────────────────────────────────╗
+│   ${green}3X-UI Panel Management Script${plain}                │
+│   ${green}0.${plain} Exit Script                               │
+│────────────────────────────────────────────────│
+│   ${green}1.${plain} Install                                   │
+│   ${green}2.${plain} Update                                    │
+│   ${green}3.${plain} Update Menu                               │
+│   ${green}4.${plain} Uninstall                                 │
+│────────────────────────────────────────────────│
+│   ${green}5.${plain} Reset Username & Password                 │
+│   ${green}6.${plain} Reset Web Base Path                       │
+│   ${green}7.${plain} Reset Settings                            │
+│   ${green}8.${plain} Change Port                               │
+│  ${green}9.${plain} View Current Settings                     │
+│────────────────────────────────────────────────│
+│  ${green}10.${plain} Start                                     │
+│  ${green}11.${plain} Stop                                      │
+│  ${green}12.${plain} Restart                                   │
+│  ${green}13.${plain} Check Status                              │
+│  ${green}14.${plain} Logs Management                           │
+│────────────────────────────────────────────────│
+│  ${green}15.${plain} Enable Autostart                          │
+│  ${green}16.${plain} Disable Autostart                         │
+│────────────────────────────────────────────────│
+│  ${green}17.${plain} IP Limit Management                       │
+│  ${green}18.${plain} SSH Port Forwarding Management            │
+│────────────────────────────────────────────────│
+│  ${green}19.${plain} Enable BBR                                │
+│  ${green}20.${plain} Update Geo Files                          │
+│  ${green}21.${plain} Speedtest by Ookla                        │
+╚────────────────────────────────────────────────╝
+"
+    show_status
+    echo && read -rp "Please enter your selection [0-25]: " num
+
+    case "${num}" in
+    0)
+        exit 0
+        ;;
+    1)
+        check_uninstall && install
+        ;;
+    2)
+        check_install && update
+        ;;
+    3)
+        check_install && update_menu
+        ;;
+    4)
+        check_install && uninstall
+        ;;
+    5)
+        check_install && reset_user
+        ;;
+    6)
+        check_install && reset_webbasepath
+        ;;
+    7)
+        check_install && reset_config
+        ;;
+    8)
+        check_install && set_port
+        ;;
+    9)
+        check_install && check_config
+        ;;
+    10)
+        check_install && start
+        ;;
+    11)
+        check_install && stop
+        ;;
+    12)
+        check_install && restart
+        ;;
+    13)
+        check_install && status
+        ;;
+    14)
+        check_install && show_log
+        ;;
+    15)
+        check_install && enable
+        ;;
+    16)
+        check_install && disable
+        ;;
+    17)
+        iplimit_main
+        ;;
+    18)
+        SSH_port_forwarding
+        ;;
+    19)
+        bbr_menu
+        ;;
+    20)
+        update_geo
+        ;;
+    21)
+        run_speedtest
+        ;;
+    *)
+        LOGE "Please enter the correct number [0-21]"
+        ;;
+    esac
 }
 
-# --- Main Menu ---
-main_menu() {
-    ensure_gum
-    
-    while true; do
-        show_header
-        STATUS=$(get_status_text)
-        
-        # Colorize status
-        case $STATUS in
-            Running) STATUS_COLOR="46" ;; # Green
-            Stopped) STATUS_COLOR="220" ;; # Yellow
-            *) STATUS_COLOR="196" ;;       # Red
-        esac
-
-        CHOICE=$(gum choose \
-            "Status: $STATUS" \
-            "---" \
-            "Install 3X-UI" \
-            "Update 3X-UI" \
-            "Uninstall 3X-UI" \
-            "---" \
-            "Start" \
-            "Stop" \
-            "Restart" \
-            "---" \
-            "Reset Username & Password" \
-            "Reset Web Base Path" \
-            "Reset Settings" \
-            "Change Port" \
-            "View Settings" \
-            "---" \
-            "Caddy Manager (NEW)" \
-            "SSL Certificate Issue (ACME)" \
-            "Update Geo Files" \
-            "---" \
-            "BBR Control" \
-            "IP Limit (Fail2ban)" \
-            "SSH Port Forwarding" \
-            "Speedtest" \
-            "Logs" \
-            "Exit"
-        )
-
-        case $CHOICE in
-            "Status: $STATUS") gum style --foreground $STATUS_COLOR "Panel is $STATUS" ;;
-            "Install 3X-UI") install ;;
-            "Update 3X-UI") update ;;
-            "Uninstall 3X-UI") uninstall ;;
-            "Start") start 0 ;;
-            "Stop") stop 0 ;;
-            "Restart") restart 0 ;;
-            "Reset Username & Password") reset_user ;;
-            "Reset Web Base Path") reset_webbasepath ;;
-            "Reset Settings") reset_config ;;
-            "Change Port") set_port ;;
-            "View Settings") check_config ;;
-            "Caddy Manager (NEW)") manage_caddy ;;
-            "SSL Certificate Issue (ACME)") ssl_cert_issue ;;
-            "Update Geo Files") update_geo ;;
-            "BBR Control")
-                SUB=$(gum choose "Enable BBR" "Disable BBR" "Back")
-                [[ "$SUB" == "Enable BBR" ]] && enable_bbr
-                [[ "$SUB" == "Disable BBR" ]] && disable_bbr
-            ;;
-            "IP Limit (Fail2ban)") iplimit_menu ;;
-            "SSH Port Forwarding") ssh_port_menu ;;
-            "Speedtest") run_speedtest ;;
-            "Logs") show_log ;;
-            "Exit") exit 0 ;;
-        esac
-    done
-}
-
-# --- CLI Argument Handler ---
 if [[ $# > 0 ]]; then
     case $1 in
-        "start") start 0 ;;
-        "stop") stop 0 ;;
-        "restart") restart 0 ;;
-        "status") 
-            ensure_gum
-            check_status
-            case $? in 0) gum style --foreground 46 "Running";; 1) gum style --foreground 220 "Stopped";; 2) gum style --foreground 196 "Not Installed";; esac
+    "start")
+        check_install 0 && start 0
         ;;
-        "install") install ;;
-        "update") update ;;
-        *) main_menu ;; # Fallback to GUI for unknown commands
+    "stop")
+        check_install 0 && stop 0
+        ;;
+    "restart")
+        check_install 0 && restart 0
+        ;;
+    "status")
+        check_install 0 && status 0
+        ;;
+    "settings")
+        check_install 0 && check_config 0
+        ;;
+    "enable")
+        check_install 0 && enable 0
+        ;;
+    "disable")
+        check_install 0 && disable 0
+        ;;
+    "log")
+        check_install 0 && show_log 0
+        ;;
+    "banlog")
+        check_install 0 && show_banlog 0
+        ;;
+    "update")
+        check_install 0 && update 0
+        ;;
+    "install")
+        check_uninstall 0 && install 0
+        ;;
+    "uninstall")
+        check_install 0 && uninstall 0
+        ;;
+    "update-all-geofiles")
+        check_install 0 && update_all_geofiles 0 && restart 0
+        ;;
+    *) show_usage ;;
     esac
 else
-    main_menu
+    show_menu
 fi
