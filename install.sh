@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-##
+#####
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -138,13 +138,6 @@ show_config_form() {
         PANEL_DOMAIN=""
         SUB_DOMAIN=""
     fi
-
-    # Ask about VLESS Reality
-    if gum confirm "Create Default VLESS Reality Inbound?"; then
-        CREATE_DEFAULT_INBOUND="true"
-    else
-        CREATE_DEFAULT_INBOUND="false"
-    fi
     
     # Generate credentials if empty
     if [[ -z "$XUI_USERNAME" ]]; then
@@ -169,7 +162,6 @@ show_config_form() {
     [[ "$USE_CADDY" == "true" ]] && gum style --foreground 250 "  ✓ Caddy Enabled"
     [[ "$USE_CADDY" == "true" ]] && gum style --foreground 250 "    Panel Domain: $PANEL_DOMAIN"
     [[ "$USE_CADDY" == "true" ]] && gum style --foreground 250 "    Sub Domain: $SUB_DOMAIN"
-    [[ "$CREATE_DEFAULT_INBOUND" == "true" ]] && gum style --foreground 250 "  ✓ VLESS Reality Inbound"
     
     echo ""
     gum confirm "Proceed with installation?" || show_config_form
@@ -419,222 +411,6 @@ EOF
     sleep 1
 }
 
-api_login() {
-    PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>/dev/null)
-    ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
-    ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+')
-    
-    if [[ "$USE_CADDY" == "true" ]]; then
-        PANEL_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
-    else
-        SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s https://api.ipify.org)
-        PANEL_URL="http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
-    fi
-    
-    local response=$(curl -k -s -c /tmp/xui_cookies.txt -X POST \
-        "${PANEL_URL}login" \
-        -H "Content-Type: application/json" \
-        -H "Accept: application/json" \
-        -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" 2>/dev/null)
-    
-    if echo "$response" | jq -e '.success == true' >/dev/null 2>&1; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-generate_uuid() {
-    local response=$(curl -k -s -b /tmp/xui_cookies.txt -X GET \
-        "${PANEL_URL}panel/api/server/getNewUUID" 2>/dev/null)
-    
-    local uuid=$(echo "$response" | jq -r '.obj.uuid // empty' 2>/dev/null)
-    
-    if [[ -n "$uuid" && "$uuid" != "null" ]]; then
-        echo "$uuid"
-    else
-        echo ""
-    fi
-}
-
-generate_reality_keys() {
-    local response=$(curl -k -s -b /tmp/xui_cookies.txt -X GET \
-        "${PANEL_URL}panel/api/server/getNewX25519Cert" 2>/dev/null)
-    
-    REALITY_PRIVATE_KEY=$(echo "$response" | jq -r '.obj.privateKey // empty' 2>/dev/null)
-    REALITY_PUBLIC_KEY=$(echo "$response" | jq -r '.obj.publicKey // empty' 2>/dev/null)
-    
-    if [[ -z "$REALITY_PRIVATE_KEY" || "$REALITY_PRIVATE_KEY" == "null" ]]; then
-        REALITY_PRIVATE_KEY=""
-    fi
-    
-    if [[ -z "$REALITY_PUBLIC_KEY" || "$REALITY_PUBLIC_KEY" == "null" ]]; then
-        REALITY_PUBLIC_KEY=""
-    fi
-}
-
-create_vless_reality_inbound() {
-    REALITY_PORT=443
-    REALITY_SNI="web.max.ru"
-    REALITY_DEST="web.max.ru:443"
-    CLIENT_EMAIL="user"
-    
-    CLIENT_UUID=$(generate_uuid)
-    if [[ -z "$CLIENT_UUID" ]]; then
-        return 1
-    fi
-    
-    if [[ ! "$CLIENT_UUID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
-        return 1
-    fi
-    
-    generate_reality_keys
-    if [[ -z "$REALITY_PRIVATE_KEY" || -z "$REALITY_PUBLIC_KEY" ]]; then
-        return 1
-    fi
-    
-    SHORT_ID=$(openssl rand -hex 8)
-    
-    local inbound_json
-    inbound_json=$(jq -n \
-        --argjson port "$REALITY_PORT" \
-        --arg uuid "$CLIENT_UUID" \
-        --arg email "$CLIENT_EMAIL" \
-        --arg dest "$REALITY_DEST" \
-        --arg sni "$REALITY_SNI" \
-        --arg privkey "$REALITY_PRIVATE_KEY" \
-        --arg publickey "$REALITY_PUBLIC_KEY" \
-        --arg shortid "$SHORT_ID" \
-        --arg remark "VLESS-Reality-Vision" \
-        --arg subId "uservlessrealityvision" \
-        '{
-            enable: true,
-            port: $port,
-            protocol: "vless",
-            settings: (
-                {
-                    clients: [{ 
-                        id: $uuid, 
-                        flow: "xtls-rprx-vision", 
-                        email: $email, 
-                        limitIp: 0, 
-                        totalGB: 0, 
-                        expiryTime: 0, 
-                        enable: true, 
-                        tgId: "", 
-                        subId: $subId 
-                    }],
-                    decryption: "none",
-                    fallbacks: []
-                } | @json
-            ),
-            streamSettings: (
-                {
-                    network: "tcp",
-                    security: "reality",
-                    realitySettings: {
-                        show: false,
-                        xver: 0,
-                        dest: $dest,
-                        serverNames: [$sni],
-                        privateKey: $privkey,
-                        publicKey: $publickey,
-                        minClientVer: "",
-                        maxClientVer: "",
-                        maxTimeDiff: 0,
-                        shortIds: [$shortid]
-                    },
-                    tcpSettings: { 
-                        acceptProxyProtocol: false, 
-                        header: { type: "none" } 
-                    }
-                } | @json
-            ),
-            sniffing: (
-                {
-                    enabled: true,
-                    destOverride: ["http", "tls", "quic", "fakedns"],
-                    metadataOnly: false,
-                    routeOnly: false
-                } | @json
-            ),
-            remark: $remark,
-            listen: "",
-            allocate: { 
-                strategy: "always", 
-                refresh: 5, 
-                concurrency: 3 
-            }
-        }'
-    )
-    
-    local response=$(curl -k -s -b /tmp/xui_cookies.txt -X POST \
-        "${PANEL_URL}panel/api/inbounds/add" \
-        -H "Content-Type: application/json" \
-        -H "Accept: application/json" \
-        -d "$inbound_json" 2>/dev/null)
-    
-    if echo "$response" | jq -e '.success == true' >/dev/null 2>&1; then
-        cat > /root/vless_reality_config.txt <<EOF
-═══════════════════════════════════════════════════
-VLESS Reality Configuration
-═══════════════════════════════════════════════════
-
-Server IP: $(curl -s ifconfig.me 2>/dev/null)
-Port: ${REALITY_PORT}
-UUID: ${CLIENT_UUID}
-Flow: xtls-rprx-vision
-Encryption: none
-Network: tcp
-Security: reality
-
-Reality Settings:
-  SNI: ${REALITY_SNI}
-  Public Key: ${REALITY_PUBLIC_KEY}
-  Short ID: ${SHORT_ID}
-  Spider X: /
-
-Client Email: ${CLIENT_EMAIL}
-
-═══════════════════════════════════════════════════
-Configuration saved to: /root/vless_reality_config.txt
-═══════════════════════════════════════════════════
-EOF
-        return 0
-    else
-        return 1
-    fi
-}
-
-configure_reality_inbound() {
-    clear
-    gum style --foreground 212 "🔑 Creating VLESS Reality Inbound..."
-    
-    if ! gum spin --spinner dot --title "Authenticating..." -- bash -c 'sleep 1'; then
-        gum style --foreground 196 "✗ Authentication setup"
-        sleep 1
-    fi
-    
-    if ! api_login; then
-        gum style --foreground 196 "✗ Authentication failed!"
-        sleep 2
-        return 1
-    fi
-    
-    gum spin --spinner dot --title "Generating UUID..." -- sleep 1
-    gum spin --spinner dot --title "Generating Reality keys..." -- sleep 1
-    gum spin --spinner dot --title "Creating inbound..." -- bash -c 'sleep 1'
-    
-    if create_vless_reality_inbound; then
-        gum style --foreground 82 "✓ VLESS Reality inbound created successfully"
-        sleep 2
-    else
-        gum style --foreground 196 "✗ Failed to create inbound"
-        sleep 2
-        return 1
-    fi
-}
-
 show_summary() {
     sleep 1
     PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>/dev/null)
@@ -668,14 +444,6 @@ show_summary() {
             "Panel (HTTP): http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
     fi
     
-    if [[ "$CREATE_DEFAULT_INBOUND" == "true" && -f /root/vless_reality_config.txt ]]; then
-        echo ""
-        gum style --foreground 212 "🔐 VLESS REALITY"
-        gum style --border rounded --padding "0 2" --foreground 250 \
-            "✓ Configuration saved to:" \
-            "  /root/vless_reality_config.txt"
-    fi
-    
     echo ""
     gum style --foreground 86 "Installation complete! Press any key to exit..."
     read -n 1 -s
@@ -693,7 +461,6 @@ main() {
     PANEL_DOMAIN=""
     SUB_DOMAIN=""
     USE_CADDY="false"
-    CREATE_DEFAULT_INBOUND="false"
     
     show_welcome
     show_config_form
@@ -704,10 +471,6 @@ main() {
     if [[ "$USE_CADDY" == "true" ]]; then
         install_caddy
         configure_caddy
-    fi
-    
-    if [[ "$CREATE_DEFAULT_INBOUND" == "true" ]]; then
-        configure_reality_inbound
     fi
     
     show_summary
