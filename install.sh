@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#№
+#
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -492,20 +492,30 @@ create_vless_inbound() {
         echo "  ✓ Generated Client UUID: $CLIENT_UUID" >> "$log_file"
         echo "" >> "$log_file"
         
-        # Generate X25519 keys for Reality
-        echo "[STEP 3] Generating X25519 keypair..." >> "$log_file"
-        X25519_OUTPUT=$(/usr/local/x-ui/x-ui x25519 2>&1)
-        echo "X25519 command output:" >> "$log_file"
-        echo "$X25519_OUTPUT" >> "$log_file"
-        echo "" >> "$log_file"
-        
-        PRIVATE_KEY=$(echo "$X25519_OUTPUT" | grep "Private key:" | awk '{print $3}')
-        PUBLIC_KEY=$(echo "$X25519_OUTPUT" | grep "Public key:" | awk '{print $3}')
-        
-        echo "Extracted keys:" >> "$log_file"
-        echo "  - Private Key: $PRIVATE_KEY" >> "$log_file"
-        echo "  - Public Key: $PUBLIC_KEY" >> "$log_file"
-        echo "" >> "$log_file"
+# Generate X25519 keys for Reality (API way)
+echo "[STEP 3] Generating X25519 keypair via API..." >> "$log_file"
+
+X25519_RESPONSE=$(curl -k -s -b "$COOKIE_FILE" \
+  "${BASE_URL}panel/api/server/getNewX25519Cert")
+
+echo "X25519 API response:" >> "$log_file"
+echo "$X25519_RESPONSE" | jq '.' >> "$log_file"
+echo "" >> "$log_file"
+
+PRIVATE_KEY=$(echo "$X25519_RESPONSE" | jq -r '.obj.privateKey')
+PUBLIC_KEY=$(echo "$X25519_RESPONSE" | jq -r '.obj.publicKey')
+
+if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" || "$PRIVATE_KEY" == "null" ]]; then
+    echo "✗ Failed to generate X25519 keys" >> "$log_file"
+    echo "EXIT_CODE:1" >> "$log_file"
+    exit 1
+fi
+
+echo "Extracted keys:" >> "$log_file"
+echo "  - Private Key: $PRIVATE_KEY" >> "$log_file"
+echo "  - Public Key: $PUBLIC_KEY" >> "$log_file"
+echo "" >> "$log_file"
+
         
         # Generate short IDs
         echo "[STEP 4] Generating Short ID..." >> "$log_file"
