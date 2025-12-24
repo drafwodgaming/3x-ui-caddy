@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#
+#№№№№№№№№№№
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -496,7 +496,7 @@ create_vless_inbound() {
 echo "[STEP 3] Generating X25519 keypair via API..." >> "$log_file"
 
 X25519_RESPONSE=$(curl -k -s -b "$COOKIE_FILE" \
-  "${BASE_URL}panel/api/server/getNewX25519Cert")
+  "https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}panel/api/server/getNewX25519Cert")
 
 echo "X25519 API response:" >> "$log_file"
 echo "$X25519_RESPONSE" | jq '.' >> "$log_file"
