@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-###########
+#
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -459,10 +459,10 @@ EOF
 
 create_vless_inbound() {
     clear
-    gum style --foreground 212 "🔐 Creating VLESS Reality Inbound via API..."
+    gum style --foreground 212 "🔐 Creating VLESS Reality Inbound..."
     local log_file="/tmp/create_inbound.log"
     
-    # Инициализация лога
+    # Инициализация лог-файла
     {
         echo "========================================"
         echo "VLESS REALITY CREATION (API MODE)"
@@ -471,179 +471,193 @@ create_vless_inbound() {
         echo ""
     } > "$log_file"
 
-    # 1. Получаем настройки панели
-    echo "[STEP 1] Getting panel settings..." | tee -a "$log_file"
-    PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>&1)
-    
-    echo "$PANEL_INFO" >> "$log_file"
-    
-    ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
-    ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+')
-
-    if [[ -z "$ACTUAL_PORT" || -z "$ACTUAL_WEBBASE" ]]; then
-        gum style --foreground 196 "✗ Failed to get panel settings."
-        read -n 1 -s
-        return 1
-    fi
-
-    # Формируем URL
-    if [[ "$USE_CADDY" == "true" ]]; then
-        BASE_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
-    else
-        BASE_URL="http://127.0.0.1:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
-    fi
-    
-    COOKIE_FILE="/tmp/x-ui-cookie.txt"
-    rm -f "$COOKIE_FILE"
-
-    # 2. Логин
-    echo "[STEP 2] Login to panel..." | tee -a "$log_file"
-    LOGIN_URL="${BASE_URL}login"
-    
-    LOGIN_PAYLOAD=$(jq -n \
-        --arg u "$XUI_USERNAME" \
-        --arg p "$XUI_PASSWORD" \
-        '{username: $u, password: $p}')
-
-    LOGIN_RESPONSE=$(curl -k -s -c "$COOKIE_FILE" -X POST "$LOGIN_URL" \
-        -H "Content-Type: application/json" \
-        -d "$LOGIN_PAYLOAD" 2>&1)
-
-    LOGIN_STATUS=$(echo "$LOGIN_RESPONSE" | jq -r '.success' 2>/dev/null)
-    echo "Login Status: $LOGIN_STATUS" >> "$log_file"
-
-    if [[ "$LOGIN_STATUS" != "true" ]]; then
-        gum style --foreground 196 "✗ Login Failed"
-        echo "$LOGIN_RESPONSE" | jq -r '.' >> "$log_file"
-        read -n 1 -s
-        return 1
-    fi
-    gum style --foreground 82 "✓ Logged in"
-    echo ""
-
-    # 3. Генерация ключей через API
-    echo "[STEP 3] Generating X25519 keys via API..." | tee -a "$log_file"
-    KEY_API_URL="${BASE_URL}panel/api/server/getNewX25519Cert"
-    
-    # API ключей использует GET или POST, в 3x-ui обычно GET работает
-    KEY_RESPONSE=$(curl -k -s -b "$COOKIE_FILE" -X GET "$KEY_API_URL" 2>&1)
-    
-    echo "Key API Response: $KEY_RESPONSE" >> "$log_file"
-    
-    PRIVATE_KEY=$(echo "$KEY_RESPONSE" | jq -r '.obj.privateKey')
-    PUBLIC_KEY=$(echo "$KEY_RESPONSE" | jq -r '.obj.publicKey')
-
-    if [[ -z "$PRIVATE_KEY" || "$PRIVATE_KEY" == "null" ]]; then
-        gum style --foreground 196 "✗ Failed to generate keys via API"
-        echo "Response: $KEY_RESPONSE" | tee -a "$log_file"
-        read -n 1 -s
-        return 1
-    fi
-    
-    gum style --foreground 82 "✓ Keys Generated"
-    echo ""
-
-    # 4. Создание инбаунда
-    echo "[STEP 4] Creating Inbound..." | tee -a "$log_file"
-    
-    CLIENT_UUID=$(cat /proc/sys/kernel/random/uuid)
-    SHORT_ID=$(openssl rand -hex 8)
-    
-    API_URL="${BASE_URL}panel/api/inbounds/add"
-
-    # Собираем JSON через jq для надежности
-    SETTINGS_JSON=$(jq -n \
-        --arg id "$CLIENT_UUID" \
-        --arg flow "xtls-rprx-vision" \
-        --arg email "default@reality" \
-        '{
-            clients: [{id: $id, flow: $flow, email: $email}],
-            decryption: "none",
-            fallbacks: []
-        }')
-
-    STREAM_JSON=$(jq -n \
-        --arg network "tcp" \
-        --arg security "reality" \
-        --arg dest "$REALITY_DEST" \
-        --arg sni "$REALITY_SNI" \
-        --arg pk "$PRIVATE_KEY" \
-        --arg pub "$PUBLIC_KEY" \
-        --arg sid "$SHORT_ID" \
-        '{
-            network: $network,
-            security: $security,
-            realitySettings: {
-                show: false,
-                xver: 0,
-                dest: $dest,
-                serverNames: [$sni],
-                privateKey: $pk,
-                shortIds: [$sid],
-                settings: {
-                    publicKey: $pub,
-                    fingerprint: "chrome",
-                    serverName: $sni,
-                    spiderX: "/"
-                }
-            }
-        }')
-
-    INBOUND_JSON=$(jq -n \
-        --argjson settings "$SETTINGS_JSON" \
-        --argjson stream "$STREAM_JSON" \
-        --arg port "$INBOUND_PORT" \
-        '{
-            enable: true,
-            remark: "VLESS Reality",
-            listen: "",
-            port: ($port | tonumber),
-            protocol: "vless",
-            settings: ($settings | tostring),
-            streamSettings: ($stream | tostring),
-            sniffing: "{\"enabled\":true,\"destOverride\":[\"http\",\"tls\",\"quic\",\"fakedns\"]}",
-            allocate: "{\"strategy\":\"always\",\"refresh\":5,\"concurrency\":3}"
-        }')
-
-    # Отправка
-    API_RESPONSE=$(curl -k -s -b "$COOKIE_FILE" -X POST "$API_URL" \
-        -H "Content-Type: application/json" \
-        -d "$INBOUND_JSON" 2>&1)
-
-    echo "API Response: $API_RESPONSE" >> "$log_file"
-    
-    API_SUCCESS=$(echo "$API_RESPONSE" | jq -r '.success' 2>/dev/null)
-
-    if [[ "$API_SUCCESS" == "true" ]]; then
-        gum style --foreground 82 "✓ VLESS Reality Inbound Created Successfully"
+    # Запускаем весь процесс создания в фоновом режиме
+    (
+        # 1. Получаем настройки панели
+        echo "[STEP 1] Getting panel settings..." >> "$log_file"
+        PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>&1)
         
-        echo "CLIENT_UUID:$CLIENT_UUID" >> "$log_file"
-        echo "PUBLIC_KEY:$PUBLIC_KEY" >> "$log_file"
-        echo "SHORT_ID:$SHORT_ID" >> "$log_file"
-    else
-        gum style --foreground 196 "✗ Failed to create inbound"
-        echo ""
-        gum style --foreground 196 "API Error:"
-        echo "$API_RESPONSE" | jq -r '.' 2>/dev/null || echo "$API_RESPONSE"
+        echo "$PANEL_INFO" >> "$log_file"
         
-        echo "EXIT_CODE:1" >> "$log_file"
+        ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
+        ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+')
+
+        if [[ -z "$ACTUAL_PORT" || -z "$ACTUAL_WEBBASE" ]]; then
+            echo "ERROR: Failed to get panel settings" >> "$log_file"
+            echo "EXIT_CODE:1" >> "$log_file"
+            exit 1
+        fi
+
+        # Формируем URL
+        if [[ "$USE_CADDY" == "true" ]]; then
+            BASE_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
+        else
+            BASE_URL="http://127.0.0.1:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
+        fi
+        
+        COOKIE_FILE="/tmp/x-ui-cookie.txt"
         rm -f "$COOKIE_FILE"
-        
-        echo ""
-        gum style --foreground 86 "Press any key to view full log..."
-        read -n 1 -s
-        cat "$log_file"
-        return 1
-    fi
 
-    rm -f "$COOKIE_FILE"
-    echo ""
-    gum style --foreground 86 "Press any key to continue..."
-    read -n 1 -s
+        # 2. Логин
+        echo "[STEP 2] Login to panel..." >> "$log_file"
+        LOGIN_URL="${BASE_URL}login"
+        
+        LOGIN_PAYLOAD=$(jq -n \
+            --arg u "$XUI_USERNAME" \
+            --arg p "$XUI_PASSWORD" \
+            '{username: $u, password: $p}')
+
+        LOGIN_RESPONSE=$(curl -k -s -c "$COOKIE_FILE" -X POST "$LOGIN_URL" \
+            -H "Content-Type: application/json" \
+            -d "$LOGIN_PAYLOAD" 2>&1)
+
+        LOGIN_STATUS=$(echo "$LOGIN_RESPONSE" | jq -r '.success' 2>/dev/null)
+        echo "Login Status: $LOGIN_STATUS" >> "$log_file"
+
+        if [[ "$LOGIN_STATUS" != "true" ]]; then
+            echo "ERROR: Login Failed" >> "$log_file"
+            echo "$LOGIN_RESPONSE" >> "$log_file"
+            echo "EXIT_CODE:1" >> "$log_file"
+            exit 1
+        fi
+        
+        # 3. Генерация ключей через API
+        echo "[STEP 3] Generating X25519 keys via API..." >> "$log_file"
+        KEY_API_URL="${BASE_URL}panel/api/server/getNewX25519Cert"
+        
+        KEY_RESPONSE=$(curl -k -s -b "$COOKIE_FILE" -X GET "$KEY_API_URL" 2>&1)
+        
+        echo "Key API Response: $KEY_RESPONSE" >> "$log_file"
+        
+        PRIVATE_KEY=$(echo "$KEY_RESPONSE" | jq -r '.obj.privateKey')
+        PUBLIC_KEY=$(echo "$KEY_RESPONSE" | jq -r '.obj.publicKey')
+
+        if [[ -z "$PRIVATE_KEY" || "$PRIVATE_KEY" == "null" ]]; then
+            echo "ERROR: Failed to generate keys via API" >> "$log_file"
+            echo "EXIT_CODE:1" >> "$log_file"
+            exit 1
+        fi
+        
+        # 4. Создание инбаунда
+        echo "[STEP 4] Creating Inbound..." >> "$log_file"
+        
+        CLIENT_UUID=$(cat /proc/sys/kernel/random/uuid)
+        SHORT_ID=$(openssl rand -hex 8)
+        
+        API_URL="${BASE_URL}panel/api/inbounds/add"
+
+        # Собираем JSON через jq
+        SETTINGS_JSON=$(jq -n \
+            --arg id "$CLIENT_UUID" \
+            --arg flow "xtls-rprx-vision" \
+            --arg email "default@reality" \
+            '{
+                clients: [{id: $id, flow: $flow, email: $email}],
+                decryption: "none",
+                fallbacks: []
+            }')
+
+        STREAM_JSON=$(jq -n \
+            --arg network "tcp" \
+            --arg security "reality" \
+            --arg dest "$REALITY_DEST" \
+            --arg sni "$REALITY_SNI" \
+            --arg pk "$PRIVATE_KEY" \
+            --arg pub "$PUBLIC_KEY" \
+            --arg sid "$SHORT_ID" \
+            '{
+                network: $network,
+                security: $security,
+                realitySettings: {
+                    show: false,
+                    xver: 0,
+                    dest: $dest,
+                    serverNames: [$sni],
+                    privateKey: $pk,
+                    shortIds: [$sid],
+                    settings: {
+                        publicKey: $pub,
+                        fingerprint: "chrome",
+                        serverName: $sni,
+                        spiderX: "/"
+                    }
+                }
+            }')
+
+        INBOUND_JSON=$(jq -n \
+            --argjson settings "$SETTINGS_JSON" \
+            --argjson stream "$STREAM_JSON" \
+            --arg port "$INBOUND_PORT" \
+            '{
+                enable: true,
+                remark: "VLESS Reality",
+                listen: "",
+                port: ($port | tonumber),
+                protocol: "vless",
+                settings: ($settings | tostring),
+                streamSettings: ($stream | tostring),
+                sniffing: "{\"enabled\":true,\"destOverride\":[\"http\",\"tls\",\"quic\",\"fakedns\"]}",
+                allocate: "{\"strategy\":\"always\",\"refresh\":5,\"concurrency\":3}"
+            }')
+
+        # Отправка
+        API_RESPONSE=$(curl -k -s -b "$COOKIE_FILE" -X POST "$API_URL" \
+            -H "Content-Type: application/json" \
+            -d "$INBOUND_JSON" 2>&1)
+
+        echo "API Response: $API_RESPONSE" >> "$log_file"
+        
+        API_SUCCESS=$(echo "$API_RESPONSE" | jq -r '.success' 2>/dev/null)
+
+        if [[ "$API_SUCCESS" == "true" ]]; then
+            # Успех: сохраняем данные в лог
+            echo "CLIENT_UUID:$CLIENT_UUID" >> "$log_file"
+            echo "PUBLIC_KEY:$PUBLIC_KEY" >> "$log_file"
+            echo "SHORT_ID:$SHORT_ID" >> "$log_file"
+            echo "EXIT_CODE:0" >> "$log_file"
+        else
+            # Ошибка API
+            echo "ERROR: API returned failure" >> "$log_file"
+            echo "$API_RESPONSE" >> "$log_file"
+            echo "EXIT_CODE:1" >> "$log_file"
+            exit 1
+        fi
+
+        rm -f "$COOKIE_FILE"
+    ) &
+
+    # Запускаем спиннер пока фоновый процесс выполняется
+    local pid=$!
+    gum spin --spinner dot --title "Configuring VLESS Reality..." -- bash -c "while kill -0 $pid 2>/dev/null; do sleep 1; done"
+    
+    # Ждем завершения процесса и получаем код возврата
+    wait $pid
+    local exit_code=$(tail -n 1 "$log_file" | grep -o 'EXIT_CODE:[0-9]*' | cut -d: -f2)
+
+    # Обработка результатов
+    if [[ "$exit_code" == "0" ]]; then
+        gum style --foreground 82 "✓ VLESS Reality inbound created successfully"
+        # Извлекаем данные для переменных окружения, чтобы show_summary их увидел
+        CLIENT_UUID=$(grep "CLIENT_UUID:" "$log_file" | cut -d: -f2-)
+        PUBLIC_KEY=$(grep "PUBLIC_KEY:" "$log_file" | cut -d: -f2-)
+        SHORT_ID=$(grep "SHORT_ID:" "$log_file" | cut -d: -f2-)
+    else
+        gum style --foreground 196 "✗ Failed to create VLESS Reality inbound"
+        echo ""
+        gum style --foreground 86 "📄 Full error log:"
+        echo ""
+        cat "$log_file"
+        # Если была ошибка, выходим, чтобы не ломать summary
+        # Но можно и продолжить, если нужно, но VLESS будет пустой
+        sleep 2 
+    fi
+    
+    sleep 1
 }
 
 show_summary() {
     sleep 1
+    # Получаем актуальные настройки панели
     PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>/dev/null)
     ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
     ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+')
@@ -675,10 +689,20 @@ show_summary() {
             "Panel (HTTP): http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
     fi
     
+    # Отображаем VLESS только если он был создан
     if [[ "$CREATE_INBOUND" == "true" && -n "$CLIENT_UUID" ]]; then
         echo ""
         gum style --foreground 212 "🔐 VLESS REALITY CONFIGURATION"
+        
+        # Определяем адрес для подключения (Домен или IP)
+        if [[ "$USE_CADDY" == "true" ]]; then
+            CONNECT_ADDR="${PANEL_DOMAIN}" # Если Caddy, используем домен панели
+        else
+            CONNECT_ADDR="${SERVER_IP}"    # Если без Caddy, используем IP
+        fi
+
         gum style --border rounded --padding "0 2" --foreground 250 \
+            "Address: $CONNECT_ADDR" \
             "Client UUID: $CLIENT_UUID" \
             "Public Key: $PUBLIC_KEY" \
             "Short ID: $SHORT_ID" \
@@ -688,7 +712,8 @@ show_summary() {
         
         echo ""
         gum style --foreground 86 "VLESS URI:"
-        VLESS_URI="vless://${CLIENT_UUID}@${SERVER_IP}:${INBOUND_PORT}?type=tcp&security=reality&pbk=${PUBLIC_KEY}&fp=chrome&sni=${REALITY_SNI}&sid=${SHORT_ID}&flow=xtls-rprx-vision#VLESS-Reality"
+        # Собираем ссылку с правильным адресом
+        VLESS_URI="vless://${CLIENT_UUID}@${CONNECT_ADDR}:${INBOUND_PORT}?type=tcp&security=reality&pbk=${PUBLIC_KEY}&fp=chrome&sni=${REALITY_SNI}&sid=${SHORT_ID}&flow=xtls-rprx-vision#VLESS-Reality"
         gum style --border rounded --padding "0 2" --foreground 250 "$VLESS_URI"
     fi
     
