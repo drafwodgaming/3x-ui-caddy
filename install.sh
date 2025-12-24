@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#
+#№№№№№№№№№№№№№№№№№№№
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -468,53 +468,109 @@ create_vless_inbound() {
         echo "VLESS REALITY INBOUND CREATION LOG"
         echo "========================================"
         echo "Timestamp: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "Architecture detected: $(arch)"
         echo ""
     } > "$log_file"
 
-    # Проверка наличия xray для генерации ключей (3x-ui использует свой бинарник)
-    local XRAY_BIN="/usr/local/x-ui/bin/xray-linux-$(arch)"
-    if [[ ! -f "$XRAY_BIN" ]]; then
-        # Fallback для старых версий или других путей
-        XRAY_BIN=$(command -v xray || true)
+    # 1. Надежный поиск бинарника Xray
+    echo "[STEP 1] Locating Xray binary..." | tee -a "$log_file"
+    
+    XRAY_BIN=""
+    
+    # Вариант 1: Стандартный путь 3x-ui
+    if [[ -f "/usr/local/x-ui/bin/xray-linux-$(arch)" ]]; then
+        XRAY_BIN="/usr/local/x-ui/bin/xray-linux-$(arch)"
+        echo "Found via standard path: $XRAY_BIN" >> "$log_file"
     fi
 
-    if [[ -z "$XRAY_BIN" || ! -x "$XRAY_BIN" ]]; then
-        gum style --foreground 196 "✗ Xray binary not found. Cannot generate keys."
-        echo "Error: Xray binary missing at $XRAY_BIN" >> "$log_file"
+    # Вариант 2: Поиск по системе (find), если первый не сработал
+    if [[ -z "$XRAY_BIN" ]]; then
+        echo "Standard path failed, searching system..." >> "$log_file"
+        XRAY_BIN=$(find /usr/local/x-ui -type f -name "xray*" -executable 2>/dev/null | head -n 1)
+        if [[ -n "$XRAY_BIN" ]]; then
+            echo "Found via system search: $XRAY_BIN" >> "$log_file"
+        fi
+    fi
+
+    # Вариант 3: Проверка PATH (если установлен глобально)
+    if [[ -z "$XRAY_BIN" ]]; then
+        XRAY_BIN=$(command -v xray 2>/dev/null)
+        if [[ -n "$XRAY_BIN" ]]; then
+            echo "Found via PATH: $XRAY_BIN" >> "$log_file"
+        fi
+    fi
+
+    # Критическая проверка
+    if [[ -z "$XRAY_BIN" ]]; then
+        gum style --foreground 196 "✗ CRITICAL: Xray binary NOT FOUND."
+        echo "" | tee -a "$log_file"
+        echo "Searched locations:" >> "$log_file"
+        echo " 1. /usr/local/x-ui/bin/xray-linux-$(arch)" >> "$log_file"
+        echo " 2. /usr/local/x-ui (recursive)" >> "$log_file"
+        echo " 3. System PATH" >> "$log_file"
+        echo "" | tee -a "$log_file"
+        
+        # Попытка показать содержимое папки bin для отладки
+        if [[ -d "/usr/local/x-ui/bin" ]]; then
+            gum style --foreground 250 "Contents of /usr/local/x-ui/bin:"
+            ls -lah /usr/local/x-ui/bin | tee -a "$log_file"
+        else
+            gum style --foreground 196 "Directory /usr/local/x-ui/bin does not exist!"
+        fi
+        
+        gum style --foreground 86 "Press any key to exit..."
         read -n 1 -s
         return 1
     fi
 
-    echo "[INFO] Using Xray binary: $XRAY_BIN" >> "$log_file"
+    # Проверка, что файл действительно исполняемый и работает
+    if [[ ! -x "$XRAY_BIN" ]]; then
+        gum style --foreground 196 "✗ Found $XRAY_BIN but it is not executable."
+        echo "Trying to set permissions..." | tee -a "$log_file"
+        chmod +x "$XRAY_BIN"
+        if [[ ! -x "$XRAY_BIN" ]]; then
+            gum style --foreground 196 "✗ Failed to set permissions."
+            read -n 1 -s
+            return 1
+        fi
+    fi
 
-    # 1. Генерация ключей (локально, это быстрее и надежнее)
-    echo "[STEP 1] Generating Reality Keys locally..." | tee -a "$log_file"
+    # 2. Генерация ключей
+    echo "[STEP 2] Generating Reality Keys..." | tee -a "$log_file"
     
-    # Генерируем пару ключей
+    # Пробуем сгенерировать
     KEYS_OUTPUT=$($XRAY_BIN x25519 2>&1)
+    CMD_EXIT_CODE=$?
+    
+    echo "Command exit code: $CMD_EXIT_CODE" >> "$log_file"
+    echo "Raw output:" >> "$log_file"
+    echo "$KEYS_OUTPUT" >> "$log_file"
+    
+    if [[ $CMD_EXIT_CODE -ne 0 ]]; then
+        gum style --foreground 196 "✗ Xray command failed with exit code $CMD_EXIT_CODE"
+        gum style --foreground 196 "Error output: $KEYS_OUTPUT"
+        read -n 1 -s
+        return 1
+    fi
+
     PRIVATE_KEY=$(echo "$KEYS_OUTPUT" | grep "Private key" | awk '{print $3}')
     PUBLIC_KEY=$(echo "$KEYS_OUTPUT" | grep "Public key" | awk '{print $3}')
 
     if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then
-        gum style --foreground 196 "✗ Failed to generate keys via xray"
-        echo "$KEYS_OUTPUT" >> "$log_file"
+        gum style --foreground 196 "✗ Failed to parse keys from output."
         read -n 1 -s
         return 1
     fi
     
-    echo "  ✓ Private Key: $PRIVATE_KEY" | tee -a "$log_file"
-    echo "  ✓ Public Key: $PUBLIC_KEY" | tee -a "$log_file"
+    gum style --foreground 82 "✓ Keys Generated"
+    echo "  Private: $PRIVATE_KEY"
+    echo "  Public:  $PUBLIC_KEY"
     echo ""
 
-    # Генерируем UUID и Short ID
-    CLIENT_UUID=$(cat /proc/sys/kernel/random/uuid)
-    SHORT_ID=$(openssl rand -hex 8)
-
-    # 2. Получение настроек панели
-    echo "[STEP 2] Getting panel configuration..." | tee -a "$log_file"
-    PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>&1)
+    # 3. Получение настроек панели
+    echo "[STEP 3] Getting panel configuration..." | tee -a "$log_file"
     
-    # Сохраняем сырой вывод для отладки
+    PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>&1)
     echo "$PANEL_INFO" >> "$log_file"
     
     ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
@@ -522,18 +578,14 @@ create_vless_inbound() {
 
     if [[ -z "$ACTUAL_PORT" || -z "$ACTUAL_WEBBASE" ]]; then
         gum style --foreground 196 "✗ Failed to parse panel settings."
-        gum style --foreground 196 "  Port: '$ACTUAL_PORT', Base: '$ACTUAL_WEBBASE'"
-        echo "Check /tmp/create_inbound.log for panel output." | tee -a "$log_file"
         read -n 1 -s
         return 1
     fi
-
-    echo "  Port: $ACTUAL_PORT" | tee -a "$log_file"
-    echo "  Base Path: $ACTUAL_WEBBASE" | tee -a "$log_file"
+    echo "  Port: $ACTUAL_PORT, Base: $ACTUAL_WEBBASE"
     echo ""
 
-    # 3. Авторизация и создание
-    echo "[STEP 3] Authenticating..." | tee -a "$log_file"
+    # 4. Авторизация и создание
+    echo "[STEP 4] Authenticating..." | tee -a "$log_file"
     
     COOKIE_FILE="/tmp/x-ui-cookie.txt"
     rm -f "$COOKIE_FILE"
@@ -551,14 +603,11 @@ create_vless_inbound() {
         --arg p "$XUI_PASSWORD" \
         '{username: $u, password: $p}')
 
-    # Логин
     LOGIN_RESPONSE=$(curl -k -s -c "$COOKIE_FILE" -X POST "$LOGIN_URL" \
         -H "Content-Type: application/json" \
         -d "$LOGIN_PAYLOAD" 2>&1)
     
     LOGIN_STATUS=$(echo "$LOGIN_RESPONSE" | jq -r '.success' 2>/dev/null)
-
-    echo "Login Response: $LOGIN_RESPONSE" >> "$log_file"
 
     if [[ "$LOGIN_STATUS" != "true" ]]; then
         gum style --foreground 196 "✗ Login Failed"
@@ -569,10 +618,13 @@ create_vless_inbound() {
     gum style --foreground 82 "✓ Logged in"
     echo ""
 
-    # 4. Подготовка JSON (ИСПРАВЛЕННАЯ ЧАСТЬ)
-    echo "[STEP 4] Creating Inbound..." | tee -a "$log_file"
+    # 5. Создание JSON и отправка
+    echo "[STEP 5] Creating Inbound..." | tee -a "$log_file"
 
-    # Формируем JSON с помощью jq, чтобы избежать ошибок синтаксиса
+    # Генерируем UUID и Short ID
+    CLIENT_UUID=$(cat /proc/sys/kernel/random/uuid)
+    SHORT_ID=$(openssl rand -hex 8)
+
     SETTINGS_JSON=$(jq -n \
         --arg id "$CLIENT_UUID" \
         --arg flow "xtls-rprx-vision" \
@@ -626,11 +678,6 @@ create_vless_inbound() {
             allocate: "{\"strategy\":\"always\",\"refresh\":5,\"concurrency\":3}"
         }')
 
-    echo "Payload prepared:" | tee -a "$log_file"
-    echo "$INBOUND_JSON" | jq '.' >> "$log_file"
-
-    # Отправка запроса
-    echo "Sending to API..." | tee -a "$log_file"
     API_RESPONSE=$(curl -k -s -b "$COOKIE_FILE" -X POST "$API_URL" \
         -H "Content-Type: application/json" \
         -d "$INBOUND_JSON" 2>&1)
@@ -642,7 +689,6 @@ create_vless_inbound() {
     if [[ "$API_SUCCESS" == "true" ]]; then
         gum style --foreground 82 "✓ VLESS Reality Inbound Created Successfully"
         
-        # Сохраняем данные для итогового экрана
         echo "CLIENT_UUID:$CLIENT_UUID" >> "$log_file"
         echo "PUBLIC_KEY:$PUBLIC_KEY" >> "$log_file"
         echo "SHORT_ID:$SHORT_ID" >> "$log_file"
