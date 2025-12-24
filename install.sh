@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#
+#№
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -463,59 +463,134 @@ create_vless_inbound() {
     local log_file="/tmp/create_inbound.log"
     
     # Get panel configuration
-    PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>/dev/null)
+    echo "========================================" > "$log_file"
+    echo "VLESS REALITY INBOUND CREATION LOG" >> "$log_file"
+    echo "========================================" >> "$log_file"
+    echo "Timestamp: $(date '+%Y-%m-%d %H:%M:%S')" >> "$log_file"
+    echo "" >> "$log_file"
+    
+    echo "[STEP 1] Getting panel configuration..." >> "$log_file"
+    PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>&1)
+    echo "Panel info output:" >> "$log_file"
+    echo "$PANEL_INFO" >> "$log_file"
+    echo "" >> "$log_file"
+    
     ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
     ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+')
     
+    echo "Extracted values:" >> "$log_file"
+    echo "  - Actual Port: $ACTUAL_PORT" >> "$log_file"
+    echo "  - Web Base Path: $ACTUAL_WEBBASE" >> "$log_file"
+    echo "" >> "$log_file"
+    
     # Generate keys and certificates
     (
-        echo "Generating Reality keys..." > "$log_file"
+        echo "[STEP 2] Generating Reality keys..." >> "$log_file"
         
         # Generate UUID for client
         CLIENT_UUID=$(cat /proc/sys/kernel/random/uuid)
-        echo "Client UUID: $CLIENT_UUID" >> "$log_file"
+        echo "  ✓ Generated Client UUID: $CLIENT_UUID" >> "$log_file"
+        echo "" >> "$log_file"
         
         # Generate X25519 keys for Reality
+        echo "[STEP 3] Generating X25519 keypair..." >> "$log_file"
         X25519_OUTPUT=$(/usr/local/x-ui/x-ui x25519 2>&1)
+        echo "X25519 command output:" >> "$log_file"
+        echo "$X25519_OUTPUT" >> "$log_file"
+        echo "" >> "$log_file"
+        
         PRIVATE_KEY=$(echo "$X25519_OUTPUT" | grep "Private key:" | awk '{print $3}')
         PUBLIC_KEY=$(echo "$X25519_OUTPUT" | grep "Public key:" | awk '{print $3}')
-        echo "Private key: $PRIVATE_KEY" >> "$log_file"
-        echo "Public key: $PUBLIC_KEY" >> "$log_file"
+        
+        echo "Extracted keys:" >> "$log_file"
+        echo "  - Private Key: $PRIVATE_KEY" >> "$log_file"
+        echo "  - Public Key: $PUBLIC_KEY" >> "$log_file"
+        echo "" >> "$log_file"
         
         # Generate short IDs
+        echo "[STEP 4] Generating Short ID..." >> "$log_file"
         SHORT_ID=$(openssl rand -hex 8)
-        echo "Short ID: $SHORT_ID" >> "$log_file"
+        echo "  ✓ Generated Short ID: $SHORT_ID" >> "$log_file"
+        echo "" >> "$log_file"
         
         # Wait for panel to be ready
+        echo "[STEP 5] Waiting for panel to be ready (3 seconds)..." >> "$log_file"
         sleep 3
+        echo "  ✓ Wait complete" >> "$log_file"
+        echo "" >> "$log_file"
         
-        # Login to get session cookie
-        echo "Logging in to panel..." >> "$log_file"
-        
+        # Construct URLs
+        echo "[STEP 6] Constructing API URLs..." >> "$log_file"
         if [[ "$USE_CADDY" == "true" ]]; then
             LOGIN_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}login"
             API_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}panel/api/inbounds/add"
+            echo "  Mode: HTTPS (via Caddy)" >> "$log_file"
         else
             LOGIN_URL="http://127.0.0.1:${ACTUAL_PORT}${ACTUAL_WEBBASE}login"
             API_URL="http://127.0.0.1:${ACTUAL_PORT}${ACTUAL_WEBBASE}panel/api/inbounds/add"
+            echo "  Mode: HTTP (direct)" >> "$log_file"
         fi
+        echo "  - Login URL: $LOGIN_URL" >> "$log_file"
+        echo "  - API URL: $API_URL" >> "$log_file"
+        echo "" >> "$log_file"
         
+        # Login to get session cookie
+        echo "[STEP 7] Authenticating to panel..." >> "$log_file"
         COOKIE_FILE="/tmp/x-ui-cookie.txt"
         
+        LOGIN_PAYLOAD="{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}"
+        echo "Login payload:" >> "$log_file"
+        echo "$LOGIN_PAYLOAD" >> "$log_file"
+        echo "" >> "$log_file"
+        
+        echo "Executing login request..." >> "$log_file"
         LOGIN_RESPONSE=$(curl -k -s -c "$COOKIE_FILE" -X POST "$LOGIN_URL" \
             -H "Content-Type: application/json" \
-            -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" 2>> "$log_file")
+            -d "$LOGIN_PAYLOAD" 2>&1)
         
-        echo "Login response: $LOGIN_RESPONSE" >> "$log_file"
+        LOGIN_HTTP_CODE=$(curl -k -s -c "$COOKIE_FILE" -X POST "$LOGIN_URL" \
+            -H "Content-Type: application/json" \
+            -d "$LOGIN_PAYLOAD" -w "%{http_code}" -o /dev/null 2>&1)
         
-        if [[ $(echo "$LOGIN_RESPONSE" | jq -r '.success' 2>/dev/null) != "true" ]]; then
-            echo "Login failed" >> "$log_file"
+        echo "Login HTTP Status Code: $LOGIN_HTTP_CODE" >> "$log_file"
+        echo "Login Response Body:" >> "$log_file"
+        echo "$LOGIN_RESPONSE" | jq '.' 2>/dev/null || echo "$LOGIN_RESPONSE" >> "$log_file"
+        echo "" >> "$log_file"
+        
+        echo "Cookie file contents:" >> "$log_file"
+        if [[ -f "$COOKIE_FILE" ]]; then
+            cat "$COOKIE_FILE" >> "$log_file"
+        else
+            echo "  ✗ Cookie file not created!" >> "$log_file"
+        fi
+        echo "" >> "$log_file"
+        
+        LOGIN_SUCCESS=$(echo "$LOGIN_RESPONSE" | jq -r '.success' 2>/dev/null)
+        echo "Login success status: $LOGIN_SUCCESS" >> "$log_file"
+        echo "" >> "$log_file"
+        
+        if [[ "$LOGIN_SUCCESS" != "true" ]]; then
+            echo "✗ LOGIN FAILED!" >> "$log_file"
+            echo "Reason: $(echo "$LOGIN_RESPONSE" | jq -r '.msg' 2>/dev/null || echo 'Unknown')" >> "$log_file"
             echo "EXIT_CODE:1" >> "$log_file"
             exit 1
         fi
         
+        echo "  ✓ Authentication successful!" >> "$log_file"
+        echo "" >> "$log_file"
+        
         # Create inbound configuration
-        echo "Creating inbound..." >> "$log_file"
+        echo "[STEP 8] Preparing inbound configuration..." >> "$log_file"
+        echo "Configuration parameters:" >> "$log_file"
+        echo "  - Port: $INBOUND_PORT" >> "$log_file"
+        echo "  - Protocol: vless" >> "$log_file"
+        echo "  - Security: reality" >> "$log_file"
+        echo "  - Flow: xtls-rprx-vision" >> "$log_file"
+        echo "  - Client Email: default@reality" >> "$log_file"
+        echo "  - Reality Dest: $REALITY_DEST" >> "$log_file"
+        echo "  - Reality SNI: $REALITY_SNI" >> "$log_file"
+        echo "  - Fingerprint: chrome" >> "$log_file"
+        echo "" >> "$log_file"
         
         INBOUND_JSON=$(cat <<EOF
 {
@@ -532,25 +607,66 @@ create_vless_inbound() {
 EOF
 )
         
-        echo "Inbound JSON: $INBOUND_JSON" >> "$log_file"
+        echo "Full Inbound JSON payload:" >> "$log_file"
+        echo "$INBOUND_JSON" | jq '.' 2>/dev/null || echo "$INBOUND_JSON" >> "$log_file"
+        echo "" >> "$log_file"
+        
+        echo "[STEP 9] Sending inbound creation request..." >> "$log_file"
+        echo "Executing POST request to: $API_URL" >> "$log_file"
+        echo "" >> "$log_file"
         
         INBOUND_RESPONSE=$(curl -k -s -b "$COOKIE_FILE" -X POST "$API_URL" \
             -H "Content-Type: application/json" \
-            -d "$INBOUND_JSON" 2>> "$log_file")
+            -d "$INBOUND_JSON" 2>&1)
         
-        echo "Inbound response: $INBOUND_RESPONSE" >> "$log_file"
+        INBOUND_HTTP_CODE=$(curl -k -s -b "$COOKIE_FILE" -X POST "$API_URL" \
+            -H "Content-Type: application/json" \
+            -d "$INBOUND_JSON" -w "%{http_code}" -o /dev/null 2>&1)
         
-        if [[ $(echo "$INBOUND_RESPONSE" | jq -r '.success' 2>/dev/null) == "true" ]]; then
+        echo "Inbound Creation HTTP Status Code: $INBOUND_HTTP_CODE" >> "$log_file"
+        echo "Inbound Creation Response Body:" >> "$log_file"
+        echo "$INBOUND_RESPONSE" | jq '.' 2>/dev/null || echo "$INBOUND_RESPONSE" >> "$log_file"
+        echo "" >> "$log_file"
+        
+        INBOUND_SUCCESS=$(echo "$INBOUND_RESPONSE" | jq -r '.success' 2>/dev/null)
+        echo "Inbound creation success status: $INBOUND_SUCCESS" >> "$log_file"
+        echo "" >> "$log_file"
+        
+        if [[ "$INBOUND_SUCCESS" == "true" ]]; then
+            echo "[STEP 10] ✓ INBOUND CREATED SUCCESSFULLY!" >> "$log_file"
+            echo "" >> "$log_file"
+            echo "========================================" >> "$log_file"
+            echo "FINAL CONFIGURATION SUMMARY" >> "$log_file"
+            echo "========================================" >> "$log_file"
+            echo "Client UUID: $CLIENT_UUID" >> "$log_file"
+            echo "Public Key: $PUBLIC_KEY" >> "$log_file"
+            echo "Short ID: $SHORT_ID" >> "$log_file"
+            echo "Port: $INBOUND_PORT" >> "$log_file"
+            echo "SNI: $REALITY_SNI" >> "$log_file"
+            echo "Dest: $REALITY_DEST" >> "$log_file"
+            echo "========================================" >> "$log_file"
+            echo "" >> "$log_file"
+            
             echo "CLIENT_UUID:$CLIENT_UUID" >> "$log_file"
             echo "PUBLIC_KEY:$PUBLIC_KEY" >> "$log_file"
             echo "SHORT_ID:$SHORT_ID" >> "$log_file"
             echo "EXIT_CODE:0" >> "$log_file"
         else
-            echo "Failed to create inbound" >> "$log_file"
+            echo "[STEP 10] ✗ INBOUND CREATION FAILED!" >> "$log_file"
+            echo "Error message: $(echo "$INBOUND_RESPONSE" | jq -r '.msg' 2>/dev/null || echo 'Unknown error')" >> "$log_file"
+            echo "Full error response:" >> "$log_file"
+            echo "$INBOUND_RESPONSE" >> "$log_file"
+            echo "" >> "$log_file"
             echo "EXIT_CODE:1" >> "$log_file"
         fi
         
+        echo "Cleaning up cookie file..." >> "$log_file"
         rm -f "$COOKIE_FILE"
+        echo "  ✓ Cleanup complete" >> "$log_file"
+        echo "" >> "$log_file"
+        echo "========================================" >> "$log_file"
+        echo "LOG END: $(date '+%Y-%m-%d %H:%M:%S')" >> "$log_file"
+        echo "========================================" >> "$log_file"
     ) &
     
     # Show spinner while creating inbound
@@ -566,13 +682,19 @@ EOF
         PUBLIC_KEY=$(grep "PUBLIC_KEY:" "$log_file" | cut -d: -f2-)
         SHORT_ID=$(grep "SHORT_ID:" "$log_file" | cut -d: -f2-)
         gum style --foreground 82 "✓ VLESS Reality inbound created successfully"
+        echo ""
+        gum style --foreground 86 "📄 Full log saved to: $log_file"
     else
         gum style --foreground 196 "✗ Failed to create VLESS Reality inbound"
-        echo "Error details:"
-        cat "$log_file" | grep -v "EXIT_CODE" | grep -v "CLIENT_UUID" | grep -v "PUBLIC_KEY" | grep -v "SHORT_ID"
+        echo ""
+        gum style --foreground 196 "📄 Full error log:"
+        echo ""
+        cat "$log_file"
     fi
     
-    rm -f "$log_file"
+    echo ""
+    gum style --foreground 86 "Press any key to continue..."
+    read -n 1 -s
     sleep 1
 }
 
@@ -674,4 +796,4 @@ main() {
     show_summary
 }
 
-main 
+main
