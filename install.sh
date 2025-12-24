@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-#№№№№№№№№№№№№№№№№№№№
+#
 red='\033[0;31m'
 green='\033[0;32m'
 blue='\033[0;34m'
@@ -459,145 +459,47 @@ EOF
 
 create_vless_inbound() {
     clear
-    gum style --foreground 212 "🔐 Creating VLESS Reality Inbound..."
+    gum style --foreground 212 "🔐 Creating VLESS Reality Inbound via API..."
     local log_file="/tmp/create_inbound.log"
     
-    # Инициализация лог-файла
+    # Инициализация лога
     {
         echo "========================================"
-        echo "VLESS REALITY INBOUND CREATION LOG"
+        echo "VLESS REALITY CREATION (API MODE)"
         echo "========================================"
         echo "Timestamp: $(date '+%Y-%m-%d %H:%M:%S')"
-        echo "Architecture detected: $(arch)"
         echo ""
     } > "$log_file"
 
-    # 1. Надежный поиск бинарника Xray
-    echo "[STEP 1] Locating Xray binary..." | tee -a "$log_file"
-    
-    XRAY_BIN=""
-    
-    # Вариант 1: Стандартный путь 3x-ui
-    if [[ -f "/usr/local/x-ui/bin/xray-linux-$(arch)" ]]; then
-        XRAY_BIN="/usr/local/x-ui/bin/xray-linux-$(arch)"
-        echo "Found via standard path: $XRAY_BIN" >> "$log_file"
-    fi
-
-    # Вариант 2: Поиск по системе (find), если первый не сработал
-    if [[ -z "$XRAY_BIN" ]]; then
-        echo "Standard path failed, searching system..." >> "$log_file"
-        XRAY_BIN=$(find /usr/local/x-ui -type f -name "xray*" -executable 2>/dev/null | head -n 1)
-        if [[ -n "$XRAY_BIN" ]]; then
-            echo "Found via system search: $XRAY_BIN" >> "$log_file"
-        fi
-    fi
-
-    # Вариант 3: Проверка PATH (если установлен глобально)
-    if [[ -z "$XRAY_BIN" ]]; then
-        XRAY_BIN=$(command -v xray 2>/dev/null)
-        if [[ -n "$XRAY_BIN" ]]; then
-            echo "Found via PATH: $XRAY_BIN" >> "$log_file"
-        fi
-    fi
-
-    # Критическая проверка
-    if [[ -z "$XRAY_BIN" ]]; then
-        gum style --foreground 196 "✗ CRITICAL: Xray binary NOT FOUND."
-        echo "" | tee -a "$log_file"
-        echo "Searched locations:" >> "$log_file"
-        echo " 1. /usr/local/x-ui/bin/xray-linux-$(arch)" >> "$log_file"
-        echo " 2. /usr/local/x-ui (recursive)" >> "$log_file"
-        echo " 3. System PATH" >> "$log_file"
-        echo "" | tee -a "$log_file"
-        
-        # Попытка показать содержимое папки bin для отладки
-        if [[ -d "/usr/local/x-ui/bin" ]]; then
-            gum style --foreground 250 "Contents of /usr/local/x-ui/bin:"
-            ls -lah /usr/local/x-ui/bin | tee -a "$log_file"
-        else
-            gum style --foreground 196 "Directory /usr/local/x-ui/bin does not exist!"
-        fi
-        
-        gum style --foreground 86 "Press any key to exit..."
-        read -n 1 -s
-        return 1
-    fi
-
-    # Проверка, что файл действительно исполняемый и работает
-    if [[ ! -x "$XRAY_BIN" ]]; then
-        gum style --foreground 196 "✗ Found $XRAY_BIN but it is not executable."
-        echo "Trying to set permissions..." | tee -a "$log_file"
-        chmod +x "$XRAY_BIN"
-        if [[ ! -x "$XRAY_BIN" ]]; then
-            gum style --foreground 196 "✗ Failed to set permissions."
-            read -n 1 -s
-            return 1
-        fi
-    fi
-
-    # 2. Генерация ключей
-    echo "[STEP 2] Generating Reality Keys..." | tee -a "$log_file"
-    
-    # Пробуем сгенерировать
-    KEYS_OUTPUT=$($XRAY_BIN x25519 2>&1)
-    CMD_EXIT_CODE=$?
-    
-    echo "Command exit code: $CMD_EXIT_CODE" >> "$log_file"
-    echo "Raw output:" >> "$log_file"
-    echo "$KEYS_OUTPUT" >> "$log_file"
-    
-    if [[ $CMD_EXIT_CODE -ne 0 ]]; then
-        gum style --foreground 196 "✗ Xray command failed with exit code $CMD_EXIT_CODE"
-        gum style --foreground 196 "Error output: $KEYS_OUTPUT"
-        read -n 1 -s
-        return 1
-    fi
-
-    PRIVATE_KEY=$(echo "$KEYS_OUTPUT" | grep "Private key" | awk '{print $3}')
-    PUBLIC_KEY=$(echo "$KEYS_OUTPUT" | grep "Public key" | awk '{print $3}')
-
-    if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then
-        gum style --foreground 196 "✗ Failed to parse keys from output."
-        read -n 1 -s
-        return 1
-    fi
-    
-    gum style --foreground 82 "✓ Keys Generated"
-    echo "  Private: $PRIVATE_KEY"
-    echo "  Public:  $PUBLIC_KEY"
-    echo ""
-
-    # 3. Получение настроек панели
-    echo "[STEP 3] Getting panel configuration..." | tee -a "$log_file"
-    
+    # 1. Получаем настройки панели
+    echo "[STEP 1] Getting panel settings..." | tee -a "$log_file"
     PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>&1)
+    
     echo "$PANEL_INFO" >> "$log_file"
     
     ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
     ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+')
 
     if [[ -z "$ACTUAL_PORT" || -z "$ACTUAL_WEBBASE" ]]; then
-        gum style --foreground 196 "✗ Failed to parse panel settings."
+        gum style --foreground 196 "✗ Failed to get panel settings."
         read -n 1 -s
         return 1
     fi
-    echo "  Port: $ACTUAL_PORT, Base: $ACTUAL_WEBBASE"
-    echo ""
 
-    # 4. Авторизация и создание
-    echo "[STEP 4] Authenticating..." | tee -a "$log_file"
+    # Формируем URL
+    if [[ "$USE_CADDY" == "true" ]]; then
+        BASE_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}"
+    else
+        BASE_URL="http://127.0.0.1:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
+    fi
     
     COOKIE_FILE="/tmp/x-ui-cookie.txt"
     rm -f "$COOKIE_FILE"
 
-    if [[ "$USE_CADDY" == "true" ]]; then
-        LOGIN_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}login"
-        API_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}panel/api/inbounds/add"
-    else
-        LOGIN_URL="http://127.0.0.1:${ACTUAL_PORT}${ACTUAL_WEBBASE}login"
-        API_URL="http://127.0.0.1:${ACTUAL_PORT}${ACTUAL_WEBBASE}panel/api/inbounds/add"
-    fi
-
+    # 2. Логин
+    echo "[STEP 2] Login to panel..." | tee -a "$log_file"
+    LOGIN_URL="${BASE_URL}login"
+    
     LOGIN_PAYLOAD=$(jq -n \
         --arg u "$XUI_USERNAME" \
         --arg p "$XUI_PASSWORD" \
@@ -606,25 +508,50 @@ create_vless_inbound() {
     LOGIN_RESPONSE=$(curl -k -s -c "$COOKIE_FILE" -X POST "$LOGIN_URL" \
         -H "Content-Type: application/json" \
         -d "$LOGIN_PAYLOAD" 2>&1)
-    
+
     LOGIN_STATUS=$(echo "$LOGIN_RESPONSE" | jq -r '.success' 2>/dev/null)
+    echo "Login Status: $LOGIN_STATUS" >> "$log_file"
 
     if [[ "$LOGIN_STATUS" != "true" ]]; then
         gum style --foreground 196 "✗ Login Failed"
-        gum style --foreground 250 "$(echo "$LOGIN_RESPONSE" | jq -r '.msg // .')"
+        echo "$LOGIN_RESPONSE" | jq -r '.' >> "$log_file"
         read -n 1 -s
         return 1
     fi
     gum style --foreground 82 "✓ Logged in"
     echo ""
 
-    # 5. Создание JSON и отправка
-    echo "[STEP 5] Creating Inbound..." | tee -a "$log_file"
+    # 3. Генерация ключей через API
+    echo "[STEP 3] Generating X25519 keys via API..." | tee -a "$log_file"
+    KEY_API_URL="${BASE_URL}panel/api/server/getNewX25519Cert"
+    
+    # API ключей использует GET или POST, в 3x-ui обычно GET работает
+    KEY_RESPONSE=$(curl -k -s -b "$COOKIE_FILE" -X GET "$KEY_API_URL" 2>&1)
+    
+    echo "Key API Response: $KEY_RESPONSE" >> "$log_file"
+    
+    PRIVATE_KEY=$(echo "$KEY_RESPONSE" | jq -r '.obj.privateKey')
+    PUBLIC_KEY=$(echo "$KEY_RESPONSE" | jq -r '.obj.publicKey')
 
-    # Генерируем UUID и Short ID
+    if [[ -z "$PRIVATE_KEY" || "$PRIVATE_KEY" == "null" ]]; then
+        gum style --foreground 196 "✗ Failed to generate keys via API"
+        echo "Response: $KEY_RESPONSE" | tee -a "$log_file"
+        read -n 1 -s
+        return 1
+    fi
+    
+    gum style --foreground 82 "✓ Keys Generated"
+    echo ""
+
+    # 4. Создание инбаунда
+    echo "[STEP 4] Creating Inbound..." | tee -a "$log_file"
+    
     CLIENT_UUID=$(cat /proc/sys/kernel/random/uuid)
     SHORT_ID=$(openssl rand -hex 8)
+    
+    API_URL="${BASE_URL}panel/api/inbounds/add"
 
+    # Собираем JSON через jq для надежности
     SETTINGS_JSON=$(jq -n \
         --arg id "$CLIENT_UUID" \
         --arg flow "xtls-rprx-vision" \
@@ -678,6 +605,7 @@ create_vless_inbound() {
             allocate: "{\"strategy\":\"always\",\"refresh\":5,\"concurrency\":3}"
         }')
 
+    # Отправка
     API_RESPONSE=$(curl -k -s -b "$COOKIE_FILE" -X POST "$API_URL" \
         -H "Content-Type: application/json" \
         -d "$INBOUND_JSON" 2>&1)
@@ -695,7 +623,7 @@ create_vless_inbound() {
     else
         gum style --foreground 196 "✗ Failed to create inbound"
         echo ""
-        gum style --foreground 196 "API Response:"
+        gum style --foreground 196 "API Error:"
         echo "$API_RESPONSE" | jq -r '.' 2>/dev/null || echo "$API_RESPONSE"
         
         echo "EXIT_CODE:1" >> "$log_file"
