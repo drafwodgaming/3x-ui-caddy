@@ -78,7 +78,7 @@ show_welcome() {
         '3X-UI + CADDY INSTALLER' \
         '' \
         'Modern TUI Installer' \
-        'Version 1.0'
+        'Version 1.1'
     
     gum style --foreground 86 "Features:"
     gum style --foreground 250 "  • Automatic configuration"
@@ -105,7 +105,7 @@ show_config_form() {
     echo ""
     gum style --foreground 86 "📋 Credentials (leave empty for auto-generation):"
     XUI_USERNAME=$(trim_spaces "$(gum input --placeholder "Username" --value "$XUI_USERNAME")")
-XUI_PASSWORD=$(trim_spaces "$(gum input --placeholder "Password" --password --value "$XUI_PASSWORD")")
+    XUI_PASSWORD=$(trim_spaces "$(gum input --placeholder "Password" --password --value "$XUI_PASSWORD")")
 
     echo ""
     gum style --foreground 86 "🔌 Port Configuration:"
@@ -143,6 +143,44 @@ XUI_PASSWORD=$(trim_spaces "$(gum input --placeholder "Password" --password --va
         SUB_DOMAIN=""
     fi
     
+    # Ask about VLESS Reality inbound
+    echo ""
+    if gum confirm "Create default VLESS Reality inbound?"; then
+        CREATE_INBOUND="true"
+        echo ""
+        gum style --foreground 86 "🔐 VLESS Reality Configuration:"
+        INBOUND_PORT=$(trim_spaces "$(gum input --placeholder "Inbound Port (e.g., 443)" --value "${INBOUND_PORT:-443}")")
+        REALITY_DEST=$(trim_spaces "$(gum input --placeholder "Reality Dest (e.g., google.com:443)" --value "${REALITY_DEST:-google.com:443}")")
+        REALITY_SNI=$(trim_spaces "$(gum input --placeholder "Reality SNI (e.g., google.com)" --value "${REALITY_SNI:-google.com}")")
+        
+        # Validate inbound configuration
+        if [[ -z "$INBOUND_PORT" ]]; then
+            gum style --foreground 196 "❌ Inbound Port is required!"
+            sleep 2
+            show_config_form
+            return
+        fi
+        
+        if [[ -z "$REALITY_DEST" ]]; then
+            gum style --foreground 196 "❌ Reality Dest is required!"
+            sleep 2
+            show_config_form
+            return
+        fi
+        
+        if [[ -z "$REALITY_SNI" ]]; then
+            gum style --foreground 196 "❌ Reality SNI is required!"
+            sleep 2
+            show_config_form
+            return
+        fi
+    else
+        CREATE_INBOUND="false"
+        INBOUND_PORT=""
+        REALITY_DEST=""
+        REALITY_SNI=""
+    fi
+    
     # Generate credentials if empty
     if [[ -z "$XUI_USERNAME" ]]; then
         XUI_USERNAME=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 10 | head -n 1)
@@ -166,6 +204,10 @@ XUI_PASSWORD=$(trim_spaces "$(gum input --placeholder "Password" --password --va
     [[ "$USE_CADDY" == "true" ]] && gum style --foreground 250 "  ✓ Caddy Enabled"
     [[ "$USE_CADDY" == "true" ]] && gum style --foreground 250 "    Panel Domain: $PANEL_DOMAIN"
     [[ "$USE_CADDY" == "true" ]] && gum style --foreground 250 "    Sub Domain: $SUB_DOMAIN"
+    [[ "$CREATE_INBOUND" == "true" ]] && gum style --foreground 250 "  ✓ VLESS Reality Inbound"
+    [[ "$CREATE_INBOUND" == "true" ]] && gum style --foreground 250 "    Port: $INBOUND_PORT"
+    [[ "$CREATE_INBOUND" == "true" ]] && gum style --foreground 250 "    Dest: $REALITY_DEST"
+    [[ "$CREATE_INBOUND" == "true" ]] && gum style --foreground 250 "    SNI: $REALITY_SNI"
     
     echo ""
     gum confirm "Proceed with installation?" || show_config_form
@@ -371,13 +413,13 @@ configure_caddy() {
     (
         echo "Creating Caddyfile..." > "$log_file"
         cat > /etc/caddy/Caddyfile <<EOF
- $PANEL_DOMAIN:8443 {
+$PANEL_DOMAIN:8443 {
     encode gzip
     reverse_proxy 127.0.0.1:$PANEL_PORT
     tls internal
 }
 
- $SUB_DOMAIN:8443 {
+$SUB_DOMAIN:8443 {
     encode gzip
     reverse_proxy 127.0.0.1:$SUB_PORT
     tls internal
@@ -409,6 +451,125 @@ EOF
         echo "Error details:"
         cat "$log_file" | grep -v "EXIT_CODE"
         exit 1
+    fi
+    
+    rm -f "$log_file"
+    sleep 1
+}
+
+create_vless_inbound() {
+    clear
+    gum style --foreground 212 "🔐 Creating VLESS Reality Inbound..."
+    local log_file="/tmp/create_inbound.log"
+    
+    # Get panel configuration
+    PANEL_INFO=$(/usr/local/x-ui/x-ui setting -show true 2>/dev/null)
+    ACTUAL_PORT=$(echo "$PANEL_INFO" | grep -oP 'port: \K\d+')
+    ACTUAL_WEBBASE=$(echo "$PANEL_INFO" | grep -oP 'webBasePath: \K\S+')
+    
+    # Generate keys and certificates
+    (
+        echo "Generating Reality keys..." > "$log_file"
+        
+        # Generate UUID for client
+        CLIENT_UUID=$(cat /proc/sys/kernel/random/uuid)
+        echo "Client UUID: $CLIENT_UUID" >> "$log_file"
+        
+        # Generate X25519 keys for Reality
+        X25519_OUTPUT=$(/usr/local/x-ui/x-ui x25519 2>&1)
+        PRIVATE_KEY=$(echo "$X25519_OUTPUT" | grep "Private key:" | awk '{print $3}')
+        PUBLIC_KEY=$(echo "$X25519_OUTPUT" | grep "Public key:" | awk '{print $3}')
+        echo "Private key: $PRIVATE_KEY" >> "$log_file"
+        echo "Public key: $PUBLIC_KEY" >> "$log_file"
+        
+        # Generate short IDs
+        SHORT_ID=$(openssl rand -hex 8)
+        echo "Short ID: $SHORT_ID" >> "$log_file"
+        
+        # Wait for panel to be ready
+        sleep 3
+        
+        # Login to get session cookie
+        echo "Logging in to panel..." >> "$log_file"
+        
+        if [[ "$USE_CADDY" == "true" ]]; then
+            LOGIN_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}login"
+            API_URL="https://${PANEL_DOMAIN}:8443${ACTUAL_WEBBASE}panel/api/inbounds/add"
+        else
+            LOGIN_URL="http://127.0.0.1:${ACTUAL_PORT}${ACTUAL_WEBBASE}login"
+            API_URL="http://127.0.0.1:${ACTUAL_PORT}${ACTUAL_WEBBASE}panel/api/inbounds/add"
+        fi
+        
+        COOKIE_FILE="/tmp/x-ui-cookie.txt"
+        
+        LOGIN_RESPONSE=$(curl -k -s -c "$COOKIE_FILE" -X POST "$LOGIN_URL" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"${XUI_USERNAME}\",\"password\":\"${XUI_PASSWORD}\"}" 2>> "$log_file")
+        
+        echo "Login response: $LOGIN_RESPONSE" >> "$log_file"
+        
+        if [[ $(echo "$LOGIN_RESPONSE" | jq -r '.success' 2>/dev/null) != "true" ]]; then
+            echo "Login failed" >> "$log_file"
+            echo "EXIT_CODE:1" >> "$log_file"
+            exit 1
+        fi
+        
+        # Create inbound configuration
+        echo "Creating inbound..." >> "$log_file"
+        
+        INBOUND_JSON=$(cat <<EOF
+{
+  "enable": true,
+  "remark": "VLESS Reality",
+  "listen": "",
+  "port": ${INBOUND_PORT},
+  "protocol": "vless",
+  "settings": "{\"clients\":[{\"id\":\"${CLIENT_UUID}\",\"flow\":\"xtls-rprx-vision\",\"email\":\"default@reality\"}],\"decryption\":\"none\",\"fallbacks\":[]}",
+  "streamSettings": "{\"network\":\"tcp\",\"security\":\"reality\",\"realitySettings\":{\"show\":false,\"xver\":0,\"dest\":\"${REALITY_DEST}\",\"serverNames\":[\"${REALITY_SNI}\"],\"privateKey\":\"${PRIVATE_KEY}\",\"minClient\":\"\",\"maxClient\":\"\",\"maxTimediff\":0,\"shortIds\":[\"${SHORT_ID}\"],\"settings\":{\"publicKey\":\"${PUBLIC_KEY}\",\"fingerprint\":\"chrome\",\"serverName\":\"${REALITY_SNI}\",\"spiderX\":\"/\"}}\"",
+  "sniffing": "{\"enabled\":true,\"destOverride\":[\"http\",\"tls\",\"quic\",\"fakedns\"],\"metadataOnly\":false,\"routeOnly\":false}",
+  "allocate": "{\"strategy\":\"always\",\"refresh\":5,\"concurrency\":3}"
+}
+EOF
+)
+        
+        echo "Inbound JSON: $INBOUND_JSON" >> "$log_file"
+        
+        INBOUND_RESPONSE=$(curl -k -s -b "$COOKIE_FILE" -X POST "$API_URL" \
+            -H "Content-Type: application/json" \
+            -d "$INBOUND_JSON" 2>> "$log_file")
+        
+        echo "Inbound response: $INBOUND_RESPONSE" >> "$log_file"
+        
+        if [[ $(echo "$INBOUND_RESPONSE" | jq -r '.success' 2>/dev/null) == "true" ]]; then
+            echo "CLIENT_UUID:$CLIENT_UUID" >> "$log_file"
+            echo "PUBLIC_KEY:$PUBLIC_KEY" >> "$log_file"
+            echo "SHORT_ID:$SHORT_ID" >> "$log_file"
+            echo "EXIT_CODE:0" >> "$log_file"
+        else
+            echo "Failed to create inbound" >> "$log_file"
+            echo "EXIT_CODE:1" >> "$log_file"
+        fi
+        
+        rm -f "$COOKIE_FILE"
+    ) &
+    
+    # Show spinner while creating inbound
+    local pid=$!
+    gum spin --spinner dot --title "Creating VLESS Reality inbound..." -- bash -c "while kill -0 $pid 2>/dev/null; do sleep 1; done"
+    
+    # Check if creation was successful
+    wait $pid
+    local exit_code=$(tail -n 1 "$log_file" | grep -o 'EXIT_CODE:[0-9]*' | cut -d: -f2)
+    
+    if [[ "$exit_code" == "0" ]]; then
+        CLIENT_UUID=$(grep "CLIENT_UUID:" "$log_file" | cut -d: -f2-)
+        PUBLIC_KEY=$(grep "PUBLIC_KEY:" "$log_file" | cut -d: -f2-)
+        SHORT_ID=$(grep "SHORT_ID:" "$log_file" | cut -d: -f2-)
+        gum style --foreground 82 "✓ VLESS Reality inbound created successfully"
+    else
+        gum style --foreground 196 "✗ Failed to create VLESS Reality inbound"
+        echo "Error details:"
+        cat "$log_file" | grep -v "EXIT_CODE" | grep -v "CLIENT_UUID" | grep -v "PUBLIC_KEY" | grep -v "SHORT_ID"
     fi
     
     rm -f "$log_file"
@@ -448,6 +609,23 @@ show_summary() {
             "Panel (HTTP): http://${SERVER_IP}:${ACTUAL_PORT}${ACTUAL_WEBBASE}"
     fi
     
+    if [[ "$CREATE_INBOUND" == "true" && -n "$CLIENT_UUID" ]]; then
+        echo ""
+        gum style --foreground 212 "🔐 VLESS REALITY CONFIGURATION"
+        gum style --border rounded --padding "0 2" --foreground 250 \
+            "Client UUID: $CLIENT_UUID" \
+            "Public Key: $PUBLIC_KEY" \
+            "Short ID: $SHORT_ID" \
+            "Port: $INBOUND_PORT" \
+            "SNI: $REALITY_SNI" \
+            "Dest: $REALITY_DEST"
+        
+        echo ""
+        gum style --foreground 86 "VLESS URI:"
+        VLESS_URI="vless://${CLIENT_UUID}@${SERVER_IP}:${INBOUND_PORT}?type=tcp&security=reality&pbk=${PUBLIC_KEY}&fp=chrome&sni=${REALITY_SNI}&sid=${SHORT_ID}&flow=xtls-rprx-vision#VLESS-Reality"
+        gum style --border rounded --padding "0 2" --foreground 250 "$VLESS_URI"
+    fi
+    
     echo ""
     gum style --foreground 86 "Installation complete! Press any key to exit..."
     read -n 1 -s
@@ -465,11 +643,18 @@ main() {
     PANEL_DOMAIN=""
     SUB_DOMAIN=""
     USE_CADDY="false"
+    CREATE_INBOUND="false"
+    INBOUND_PORT="443"
+    REALITY_DEST="google.com:443"
+    REALITY_SNI="google.com"
+    CLIENT_UUID=""
+    PUBLIC_KEY=""
+    SHORT_ID=""
     
     show_welcome
     show_config_form
 
-    for var in XUI_USERNAME XUI_PASSWORD PANEL_PORT SUB_PORT PANEL_DOMAIN SUB_DOMAIN; do
+    for var in XUI_USERNAME XUI_PASSWORD PANEL_PORT SUB_PORT PANEL_DOMAIN SUB_DOMAIN INBOUND_PORT REALITY_DEST REALITY_SNI; do
         eval "$var=\"\$(trim_spaces \"\${$var}\")\""
     done
 
@@ -482,7 +667,11 @@ main() {
         configure_caddy
     fi
     
+    if [[ "$CREATE_INBOUND" == "true" ]]; then
+        create_vless_inbound
+    fi
+    
     show_summary
 }
 
-main
+main 
